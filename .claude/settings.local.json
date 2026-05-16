@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\Afik\\\\Documents\\\\goal-to-grid\" -Recurse)",
+      "Bash(Select-Object FullName)",
+      "Bash(ConvertTo-Csv -NoTypeInformation)",
+      "Bash(Out-String)",
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\Afik\\\\Documents\\\\goal-to-grid\" -Recurse -Directory)",
+      "Bash(Sort-Object FullName)",
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\Afik\\\\Documents\\\\goal-to-grid\" -Depth 1 -Directory)",
+      "Bash(Select-Object Name)"
+    ]
+  }
+}
