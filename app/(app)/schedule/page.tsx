@@ -125,6 +125,14 @@ function minutesToTime(minutesFromDayStart: number): string {
   return `${pad2(Math.floor(totalMinutes / 60))}:${pad2(totalMinutes % 60)}`
 }
 
+function normalizeDurationParts(hours: number, minutes: number) {
+  const total = Math.max(0, Math.round(hours) * 60 + Math.round(minutes))
+  return {
+    hours: Math.floor(total / 60),
+    minutes: total % 60,
+  }
+}
+
 function entryPosition(entry: CalendarEntry) {
   const start = entryStart(entry)
   const end = entryEnd(entry)
@@ -144,25 +152,27 @@ function DroppableDayColumn({
   day: Date
   children: React.ReactNode
   onColumnClick: (day: Date, e: React.MouseEvent<HTMLDivElement>) => void
-  snapPreview: { date: string; top: number; height: number } | null
+  snapPreview: { date: string; startTime: string; top: number; height: number } | null
 }) {
   const id = `day-col-${toDateInput(day)}`
-  const { setNodeRef, isOver } = useDroppable({ id })
+  const { setNodeRef } = useDroppable({ id })
   const dateStr = toDateInput(day)
   return (
     <div
       ref={setNodeRef}
       id={id}
       data-calendar-day={dateStr}
-      className={cn('relative border-r last:border-r-0 cursor-crosshair transition-colors', isOver && 'bg-primary/5')}
+      className="relative border-r last:border-r-0 cursor-crosshair"
       onClick={e => onColumnClick(day, e)}
     >
       {children}
       {snapPreview?.date === dateStr && (
         <div
-          className="absolute left-1 right-1 rounded-md border-2 border-primary/60 bg-primary/15 pointer-events-none z-10"
+          className="absolute left-1 right-1 rounded-md border-2 border-primary/70 bg-primary/15 pointer-events-none z-10 px-2 py-1 text-xs font-medium text-primary shadow-sm"
           style={{ top: `${snapPreview.top}px`, height: `${snapPreview.height}px` }}
-        />
+        >
+          {snapPreview.startTime}
+        </div>
       )}
     </div>
   )
@@ -230,6 +240,7 @@ function DraggableEventBlock({
   return (
     <button
       ref={setNodeRef}
+      id={id}
       style={style}
       className={cn(
         'absolute left-1 right-1 overflow-hidden rounded-md border px-2 py-1 text-left text-xs leading-tight shadow-sm transition-opacity hover:opacity-90 touch-none select-none',
@@ -275,13 +286,13 @@ export default function SchedulePage() {
     expires_at?: string | null
   } | null>(null)
   const [viewMode, setViewMode] = useState<ViewMode>('week')
-  const [now, setNow] = useState(() => new Date())
+  const [now, setNow] = useState<Date | null>(null)
   const [syncing, setSyncing] = useState(false)
 
   // DnD state
   const [activeDragTask, setActiveDragTask] = useState<Task | null>(null)
   const [activeDragItem, setActiveDragItem] = useState<ScheduleItemWithTask | null>(null)
-  const [snapPreview, setSnapPreview] = useState<{ date: string; top: number; height: number } | null>(null)
+  const [snapPreview, setSnapPreview] = useState<{ date: string; startTime: string; top: number; height: number } | null>(null)
   const lastPointerRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
   const dragGrabOffsetYRef = useRef(0)
 
@@ -307,8 +318,13 @@ export default function SchedulePage() {
 
   // Current time line — refreshes every 30 s
   useEffect(() => {
-    const id = setInterval(() => setNow(new Date()), 30000)
-    return () => clearInterval(id)
+    const refreshNow = () => setNow(new Date())
+    const firstTick = window.setTimeout(refreshNow, 0)
+    const id = window.setInterval(refreshNow, 30000)
+    return () => {
+      window.clearTimeout(firstTick)
+      window.clearInterval(id)
+    }
   }, [])
 
   const windowEnd = useMemo(() => addDays(weekStart, 7), [weekStart])
@@ -353,6 +369,10 @@ export default function SchedulePage() {
   const unscheduledTasks = allTasks.filter(t => !scheduledTaskIds.has(t.id) && !t.is_completed)
   const hours = useMemo(
     () => Array.from({ length: DAY_END_HOUR - DAY_START_HOUR }, (_, i) => DAY_START_HOUR + i),
+    []
+  )
+  const hourMarks = useMemo(
+    () => Array.from({ length: DAY_END_HOUR - DAY_START_HOUR + 1 }, (_, i) => DAY_START_HOUR + i),
     []
   )
   const allEntries = useMemo<CalendarEntry[]>(() => [
@@ -624,6 +644,7 @@ export default function SchedulePage() {
     const startMin = (parseInt(hStr, 10) - DAY_START_HOUR) * 60 + parseInt(mStr, 10)
     setSnapPreview({
       date: target.date,
+      startTime: target.startTime,
       top: (startMin / 60) * HOUR_HEIGHT,
       height: Math.max(28, (durMin / 60) * HOUR_HEIGHT),
     })
@@ -678,7 +699,7 @@ export default function SchedulePage() {
         setSyncMsg(json.error ?? 'Failed to place task on the calendar.')
         return
       }
-      if (json.detail) setSyncMsg(json.detail)
+      setSyncMsg(json.warning ?? json.detail ?? 'Task placed on the calendar.')
       await fetchItems()
     } else if (type === 'item') {
       // Immediate PATCH — preserve duration, change day + time
@@ -708,7 +729,13 @@ export default function SchedulePage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ scheduled_start: start.toISOString(), scheduled_end: end.toISOString() }),
       })
-      if (!res.ok) await fetchItems() // revert on failure
+      if (!res.ok) {
+        await fetchItems() // revert on failure
+        setSyncMsg('Failed to move task.')
+        return
+      }
+      const json = await res.json()
+      setSyncMsg(json.warning ?? 'Task moved on the calendar.')
     }
   }
 
@@ -873,7 +900,7 @@ export default function SchedulePage() {
                 >
                   {/* Hour labels */}
                   <div className="sticky left-0 z-20 relative border-r bg-background">
-                    {hours.map(hour => (
+                    {hourMarks.map(hour => (
                       <div key={hour} className="absolute left-0 right-0 border-t bg-background px-2 text-right text-[11px] text-muted-foreground"
                         style={{ top: `${(hour - DAY_START_HOUR) * HOUR_HEIGHT - (hour === DAY_END_HOUR ? 16 : 0)}px` }}>
                         {hour === 24 ? '24' : pad2(hour)}:00
@@ -884,26 +911,22 @@ export default function SchedulePage() {
                   {/* Day columns */}
                   {days.map(day => {
                     const dayEntries = entriesForDay(day)
-                    const isToday = now.toDateString() === day.toDateString()
-                    const nowMinutes = (now.getHours() - DAY_START_HOUR) * 60 + now.getMinutes()
+                    const isToday = now ? now.toDateString() === day.toDateString() : false
+                    const nowMinutes = now ? (now.getHours() - DAY_START_HOUR) * 60 + now.getMinutes() : -1
                     const nowTop = (nowMinutes / 60) * HOUR_HEIGHT
                     const showNowLine = isToday && nowMinutes >= 0 && nowMinutes <= (DAY_END_HOUR - DAY_START_HOUR) * 60
 
                     return (
                       <DroppableDayColumn key={day.toISOString()} day={day} onColumnClick={handleColumnClick} snapPreview={snapPreview}>
-                        {/* Hour grid lines */}
+                        {/* Hour windows */}
                         {hours.map(hour => (
-                          <div key={hour} className="absolute left-0 right-0 border-t border-muted"
-                            style={{ top: `${(hour - DAY_START_HOUR) * HOUR_HEIGHT}px` }} />
+                          <div
+                            key={hour}
+                            className="absolute left-0 right-0 border-t border-muted/70 bg-background hover:bg-muted/20"
+                            style={{ top: `${(hour - DAY_START_HOUR) * HOUR_HEIGHT}px`, height: `${HOUR_HEIGHT}px` }}
+                          />
                         ))}
-
-                        {/* 15-minute grid lines */}
-                        {Array.from({ length: (DAY_END_HOUR - DAY_START_HOUR) * 4 }, (_, q) => q).map(q =>
-                          q % 4 !== 0 ? (
-                            <div key={`q${q}`} className="absolute left-0 right-0 border-t border-muted/25"
-                              style={{ top: `${(q / 4) * HOUR_HEIGHT}px` }} />
-                          ) : null
-                        )}
+                        <div className="absolute left-0 right-0 border-t border-muted/70" style={{ top: `${DAY_WINDOW_MINUTES / 60 * HOUR_HEIGHT}px` }} />
 
                         {/* Current time indicator */}
                         {showNowLine && (
@@ -973,7 +996,9 @@ export default function SchedulePage() {
               <h2 className="font-semibold">Unscheduled Tasks</h2>
               <p className="mt-1 text-xs text-muted-foreground">Drag tasks onto the calendar. Drag scheduled items back here to unschedule them.</p>
               <div className="mt-3 max-h-[420px] space-y-2 overflow-auto">
-                {unscheduledTasks.length === 0 ? (
+                {allTasks.length === 0 ? (
+                  <p className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">No tasks yet. Create goals and tasks in Plan first.</p>
+                ) : unscheduledTasks.length === 0 ? (
                   <p className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">All tasks are scheduled. Drop a calendar item here to unschedule it.</p>
                 ) : (
                   unscheduledTasks.map(task => (
@@ -1071,14 +1096,24 @@ export default function SchedulePage() {
                 </div>
                 <div className="space-y-2">
                   <Label>Start</Label>
-                  <Input type="time" value={manualForm.start_time} onChange={e => setManualForm(f => ({ ...f, start_time: e.target.value }))} required />
+                  <Input type="time" step={900} value={manualForm.start_time} onChange={e => setManualForm(f => ({ ...f, start_time: e.target.value }))} required />
                 </div>
                 <div className="space-y-2">
-                  <Label>Duration</Label>
+                  <Label>Duration <span className="text-muted-foreground font-normal">= {formatDuration(manualForm.durationHours * 60 + manualForm.durationMins)}</span></Label>
                   <div className="flex items-center gap-1.5">
-                    <Input type="number" min={0} max={23} className="w-16" value={manualForm.durationHours} onChange={e => setManualForm(f => ({ ...f, durationHours: Math.max(0, Number(e.target.value)) }))} />
+                    <Input type="number" min={0} className="w-16" value={manualForm.durationHours} onChange={e => setManualForm(f => ({ ...f, durationHours: Math.max(0, Number(e.target.value)) }))} />
                     <span className="text-sm text-muted-foreground">h</span>
-                    <Input type="number" min={0} max={59} step={5} className="w-16" value={manualForm.durationMins} onChange={e => setManualForm(f => ({ ...f, durationMins: Math.max(0, Math.min(59, Number(e.target.value))) }))} />
+                    <Input
+                      type="number"
+                      min={0}
+                      step={5}
+                      className="w-16"
+                      value={manualForm.durationMins}
+                      onChange={e => setManualForm(f => {
+                        const next = normalizeDurationParts(f.durationHours, Number(e.target.value))
+                        return { ...f, durationHours: next.hours, durationMins: next.minutes }
+                      })}
+                    />
                     <span className="text-sm text-muted-foreground">m</span>
                   </div>
                 </div>

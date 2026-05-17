@@ -31,7 +31,8 @@ export async function proxy(request: NextRequest) {
 
   const { pathname } = request.nextUrl
   const isAuthPage = pathname === '/login' || pathname === '/register'
-  const isPublicRoute = isAuthPage || pathname === '/'
+  const isPasswordRecoveryPage = pathname === '/forgot-password' || pathname === '/reset-password'
+  const isPublicRoute = isAuthPage || isPasswordRecoveryPage || pathname === '/'
   const isApiRoute = pathname.startsWith('/api')
 
   // Redirect unauthenticated users away from protected app routes.

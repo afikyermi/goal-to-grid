@@ -3,6 +3,13 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import Sidebar from '@/components/Sidebar'
 
+type AppProfile = {
+  display_name: string | null
+  household_id: string | null
+  role: string | null
+  households: { name: string } | null
+}
+
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   // Use the user-scoped client only for auth verification
   const supabase = await createClient()
@@ -13,11 +20,43 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   // Use admin client to read the profile — bypasses RLS so we never get a
   // false null due to a policy gap (e.g. household_id just written by upsert)
   const admin = createAdminClient()
-  const { data: profile } = await admin
+  let { data: profile } = await admin
     .from('profiles')
     .select('display_name, household_id, role, households(name)')
     .eq('id', user.id)
-    .single()
+    .single<AppProfile>()
+
+  if (!profile?.household_id) {
+    const fallbackName = profile?.display_name
+      ?? user.user_metadata?.display_name
+      ?? user.email?.split('@')[0]
+      ?? 'My'
+
+    const { data: household } = await admin
+      .from('households')
+      .insert({ name: `${fallbackName}'s Workspace` })
+      .select('id')
+      .single()
+
+    if (household?.id) {
+      await admin
+        .from('profiles')
+        .upsert({
+          id: user.id,
+          household_id: household.id,
+          display_name: profile?.display_name ?? user.user_metadata?.display_name ?? null,
+          role: profile?.role ?? 'member',
+        })
+
+      const refreshed = await admin
+        .from('profiles')
+        .select('display_name, household_id, role, households(name)')
+        .eq('id', user.id)
+        .single<AppProfile>()
+
+      profile = refreshed.data
+    }
+  }
 
   if (!profile?.household_id) redirect('/setup-household')
 

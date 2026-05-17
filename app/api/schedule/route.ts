@@ -1,27 +1,60 @@
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { NextRequest } from 'next/server'
-import { z } from 'zod'
 import { scheduleTasks } from '@/lib/engine/scheduler'
 import type { Task, UserConstraint } from '@/lib/types'
 import { createGoogleEvent, getGoogleConnection } from '@/lib/google/calendar'
 import { recordBehaviorEvent } from '@/lib/behavior/events'
+import { getUserWorkspaceId, taskBelongsToWorkspace } from '@/lib/server/workspace'
 
-const ManualScheduleSchema = z.object({
-  task_id: z.string().uuid(),
-  scheduled_start: z.string().datetime(),
-  scheduled_end: z.string().datetime(),
-})
+type ManualScheduleBody = {
+  task_id: string
+  scheduled_start: string
+  scheduled_end: string
+}
 
-const BulkScheduleSchema = z.object({
-  task_ids: z.array(z.string().uuid()).min(1),
-  window_start: z.string().datetime(),
-  window_end: z.string().datetime(),
-})
+type BulkScheduleBody = {
+  task_ids: string[]
+  window_start: string
+  window_end: string
+}
 
-const PostBodySchema = z.union([
-  ManualScheduleSchema,
-  BulkScheduleSchema,
-])
+function isUuid(value: unknown): value is string {
+  return typeof value === 'string'
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+}
+
+function isDateTime(value: unknown): value is string {
+  return typeof value === 'string' && !Number.isNaN(new Date(value).getTime())
+}
+
+function parseScheduleBody(body: unknown): ManualScheduleBody | BulkScheduleBody | null {
+  if (!body || typeof body !== 'object') return null
+  const data = body as Record<string, unknown>
+
+  if (isUuid(data.task_id) && isDateTime(data.scheduled_start) && isDateTime(data.scheduled_end)) {
+    return {
+      task_id: data.task_id,
+      scheduled_start: data.scheduled_start,
+      scheduled_end: data.scheduled_end,
+    }
+  }
+
+  if (Array.isArray(data.task_ids)
+    && data.task_ids.length > 0
+    && data.task_ids.every(isUuid)
+    && isDateTime(data.window_start)
+    && isDateTime(data.window_end)
+  ) {
+    return {
+      task_ids: data.task_ids,
+      window_start: data.window_start,
+      window_end: data.window_end,
+    }
+  }
+
+  return null
+}
 
 function isOutsideGoalWindow(
   start: string,
@@ -41,11 +74,13 @@ export async function GET(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 })
 
+  const admin = createAdminClient()
   const weekStart = request.nextUrl.searchParams.get('week_start')
 
-  let query = supabase
+  let query = admin
     .from('schedule_items')
     .select('*, tasks(id, name, duration_min, priority, goal_id, goals(id, name, start_date, end_date))')
+    .eq('scheduled_by', user.id)
     .order('scheduled_start')
 
   if (weekStart) {
@@ -67,6 +102,9 @@ export async function POST(request: NextRequest) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 })
+  const workspaceId = await getUserWorkspaceId(user.id)
+  if (!workspaceId) return Response.json({ error: 'You must belong to a workspace first' }, { status: 400 })
+  const admin = createAdminClient()
 
   let rawBody: unknown
   try {
@@ -75,18 +113,20 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const parsed = PostBodySchema.safeParse(rawBody)
-  if (!parsed.success) {
-    return Response.json({ error: 'Invalid request body', details: parsed.error.flatten() }, { status: 400 })
-  }
-
-  const body = parsed.data
+  const body = parseScheduleBody(rawBody)
+  if (!body) return Response.json({ error: 'Invalid request body' }, { status: 400 })
 
   // Manual single-task scheduling
   if ('task_id' in body) {
     const { task_id, scheduled_start, scheduled_end } = body
+    if (new Date(scheduled_end) <= new Date(scheduled_start)) {
+      return Response.json({ error: 'scheduled_end must be after scheduled_start' }, { status: 400 })
+    }
+    if (!(await taskBelongsToWorkspace(task_id, workspaceId))) {
+      return Response.json({ error: 'Task not found' }, { status: 404 })
+    }
 
-    const { data, error } = await supabase
+    const { data, error } = await admin
       .from('schedule_items')
       .insert({
         task_id,
@@ -119,7 +159,7 @@ export async function POST(request: NextRequest) {
       const connection = await getGoogleConnection(user.id)
       if (connection) {
         const googleEventId = await createGoogleEvent(user.id, data, task)
-        const { data: synced } = await supabase
+        const { data: synced } = await admin
           .from('schedule_items')
           .update({ google_event_id: googleEventId })
           .eq('id', data.id)
@@ -150,12 +190,16 @@ export async function POST(request: NextRequest) {
 
   // Engine-based bulk scheduling
   const { task_ids, window_start, window_end } = body
+  if (new Date(window_end) <= new Date(window_start)) {
+    return Response.json({ error: 'window_end must be after window_start' }, { status: 400 })
+  }
 
   // Fetch tasks — exclude completed ones
-  const { data: tasks, error: tasksError } = await supabase
+  const { data: tasks, error: tasksError } = await admin
     .from('tasks')
-    .select('*, goals(id, name, start_date, end_date, deadline, priority)')
+    .select('*, goals!inner(id, name, start_date, end_date, deadline, priority, sectors!inner(household_id))')
     .in('id', task_ids)
+    .eq('goals.sectors.household_id', workspaceId)
     .eq('is_completed', false)
 
   if (tasksError || !tasks) return Response.json({ error: 'Failed to fetch tasks' }, { status: 500 })
@@ -165,7 +209,7 @@ export async function POST(request: NextRequest) {
   }
 
   // Fetch constraints from all household members (via household_availability_windows view)
-  const { data: constraints } = await supabase
+  const { data: constraints } = await admin
     .from('household_availability_windows')
     .select('user_id, day_of_week, start_time, end_time')
 
@@ -181,13 +225,13 @@ export async function POST(request: NextRequest) {
   }))
 
   // Fetch existing busy blocks from all household members (via household_busy_blocks view)
-  const { data: busyBlocks } = await supabase
+  const { data: busyBlocks } = await admin
     .from('household_busy_blocks')
     .select('scheduled_start, scheduled_end')
     .gte('scheduled_start', window_start)
     .lte('scheduled_end', window_end)
 
-  const { data: externalBusyBlocks } = await supabase
+  const { data: externalBusyBlocks } = await admin
     .from('external_calendar_events')
     .select('starts_at, ends_at')
     .eq('user_id', user.id)
@@ -212,7 +256,7 @@ export async function POST(request: NextRequest) {
 
   const itemsWithUser = newItems.map(item => ({ ...item, scheduled_by: user.id }))
 
-  const { data: inserted, error: insertError } = await supabase
+  const { data: inserted, error: insertError } = await admin
     .from('schedule_items')
     .insert(itemsWithUser)
     .select('*, tasks(id, name, duration_min, priority, goal_id, goals(id, name, start_date, end_date))')

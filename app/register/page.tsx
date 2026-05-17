@@ -9,70 +9,71 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 
-type Step = 'account' | 'household'
-
 export default function RegisterPage() {
   const router = useRouter()
-  const [step, setStep] = useState<Step>('account')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
   const [displayName, setDisplayName] = useState('')
-  const [householdAction, setHouseholdAction] = useState<'create' | 'join'>('create')
-  const [householdName, setHouseholdName] = useState('')
-  const [householdId, setHouseholdId] = useState('')
-  const [accessToken, setAccessToken] = useState<string | null>(null)
+  const [workspaceName, setWorkspaceName] = useState('')
+  const [success, setSuccess] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
-  async function handleAccountStep(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setLoading(true)
+    setSuccess(null)
     setError(null)
+
+    if (password !== confirmPassword) {
+      setError('Passwords do not match.')
+      setLoading(false)
+      return
+    }
+
     const supabase = createClient()
-    const { data, error } = await supabase.auth.signUp({ email, password })
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: { display_name: displayName.trim() || null },
+      },
+    })
+
     if (error) {
       setError(error.message)
       setLoading(false)
       return
     }
-    // Save the access token to send with household creation request
-    setAccessToken(data.session?.access_token ?? null)
-    setStep('household')
-    setLoading(false)
-  }
 
-  async function handleHouseholdStep(e: React.FormEvent) {
-    e.preventDefault()
-    setLoading(true)
-    setError(null)
+    const accessToken = data.session?.access_token
+    if (!accessToken) {
+      setSuccess('Account created. Check your email to confirm it, then sign in.')
+      setLoading(false)
+      return
+    }
 
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-    if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`
+    const resolvedWorkspaceName = workspaceName.trim()
+      || `${displayName.trim() || email.split('@')[0]}'s Workspace`
 
-    if (householdAction === 'create') {
-      const res = await fetch('/api/household', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ name: householdName, display_name: displayName || null }),
-      })
-      const json = await res.json()
-      if (!res.ok) {
-        setError(json.error ?? 'Failed to create household')
-        setLoading(false)
-        return
-      }
-    } else {
-      const res = await fetch('/api/household', {
-        method: 'PATCH',
-        headers,
-        body: JSON.stringify({ household_id: householdId.trim(), display_name: displayName || null }),
-      })
-      const json = await res.json()
-      if (!res.ok) {
-        setError(json.error ?? 'Failed to join household')
-        setLoading(false)
-        return
-      }
+    const res = await fetch('/api/household', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        name: resolvedWorkspaceName,
+        display_name: displayName.trim() || null,
+      }),
+    })
+
+    const json = await res.json()
+    if (!res.ok) {
+      setError(json.error ?? 'Failed to create workspace')
+      setLoading(false)
+      return
     }
 
     router.push('/dashboard')
@@ -84,60 +85,67 @@ export default function RegisterPage() {
       <Card className="w-full max-w-sm">
         <CardHeader>
           <CardTitle className="text-2xl">Create account</CardTitle>
-          <CardDescription>
-            {step === 'account' ? 'Step 1 of 2 — Your credentials' : 'Step 2 of 2 — Your household'}
-          </CardDescription>
+          <CardDescription>Set up your account and workspace in one step.</CardDescription>
         </CardHeader>
         <CardContent>
-          {step === 'account' ? (
-            <form onSubmit={handleAccountStep} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
-                <Input id="email" type="email" value={email} onChange={e => setEmail(e.target.value)} required />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="password">Password</Label>
-                <Input id="password" type="password" value={password} onChange={e => setPassword(e.target.value)} required minLength={8} />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="name">Display name (optional)</Label>
-                <Input id="name" value={displayName} onChange={e => setDisplayName(e.target.value)} placeholder="e.g. Afik" />
-              </div>
-              {error && <p className="text-sm text-destructive">{error}</p>}
-              <Button type="submit" className="w-full" disabled={loading}>
-                {loading ? 'Creating account…' : 'Continue'}
-              </Button>
-            </form>
-          ) : (
-            <form onSubmit={handleHouseholdStep} className="space-y-4">
-              <div className="flex gap-2">
-                <Button type="button" variant={householdAction === 'create' ? 'default' : 'outline'} className="flex-1" onClick={() => setHouseholdAction('create')}>
-                  Create new
-                </Button>
-                <Button type="button" variant={householdAction === 'join' ? 'default' : 'outline'} className="flex-1" onClick={() => setHouseholdAction('join')}>
-                  Join existing
-                </Button>
-              </div>
-
-              {householdAction === 'create' ? (
-                <div className="space-y-2">
-                  <Label htmlFor="hname">Household name</Label>
-                  <Input id="hname" placeholder="e.g. The Yirmi Family" value={householdName} onChange={e => setHouseholdName(e.target.value)} required />
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <Label htmlFor="hid">Household ID</Label>
-                  <Input id="hid" placeholder="Paste the household UUID" value={householdId} onChange={e => setHouseholdId(e.target.value)} required />
-                  <p className="text-xs text-muted-foreground">Ask your partner to share their Household ID from Settings.</p>
-                </div>
-              )}
-
-              {error && <p className="text-sm text-destructive">{error}</p>}
-              <Button type="submit" className="w-full" disabled={loading}>
-                {loading ? 'Setting up…' : 'Finish setup'}
-              </Button>
-            </form>
-          )}
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="name">Full name</Label>
+              <Input
+                id="name"
+                value={displayName}
+                onChange={e => setDisplayName(e.target.value)}
+                placeholder="e.g. Afik Yermiyahu"
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="email">Email</Label>
+              <Input
+                id="email"
+                type="email"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="workspace">Workspace name</Label>
+              <Input
+                id="workspace"
+                value={workspaceName}
+                onChange={e => setWorkspaceName(e.target.value)}
+                placeholder="e.g. Afik's Workspace"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="password">Password</Label>
+              <Input
+                id="password"
+                type="password"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                required
+                minLength={8}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="confirmPassword">Confirm password</Label>
+              <Input
+                id="confirmPassword"
+                type="password"
+                value={confirmPassword}
+                onChange={e => setConfirmPassword(e.target.value)}
+                required
+                minLength={8}
+              />
+            </div>
+            {error && <p className="text-sm text-destructive">{error}</p>}
+            {success && <p className="text-sm text-green-700">{success}</p>}
+            <Button type="submit" className="w-full" disabled={loading}>
+              {loading ? 'Creating account...' : 'Create account'}
+            </Button>
+          </form>
           <p className="mt-4 text-center text-sm text-muted-foreground">
             Already have an account?{' '}
             <Link href="/login" className="underline underline-offset-4 hover:text-primary">

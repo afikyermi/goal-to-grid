@@ -1,37 +1,64 @@
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { suggestTaskSlots } from '@/lib/engine/scheduler'
 import { recordBehaviorEvent } from '@/lib/behavior/events'
 import type { Task, UserConstraint } from '@/lib/types'
 import { NextRequest } from 'next/server'
-import { z } from 'zod'
+import { getUserWorkspaceId } from '@/lib/server/workspace'
 
-const BodySchema = z.object({
-  task_ids: z.array(z.string().uuid()).min(1),
-  window_start: z.string().datetime(),
-  window_end: z.string().datetime(),
-})
+function isUuid(value: unknown): value is string {
+  return typeof value === 'string'
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+}
+
+function isDateTime(value: unknown): value is string {
+  return typeof value === 'string' && !Number.isNaN(new Date(value).getTime())
+}
+
+function parseBody(body: unknown) {
+  if (!body || typeof body !== 'object') return null
+  const data = body as Record<string, unknown>
+  if (!Array.isArray(data.task_ids)
+    || data.task_ids.length === 0
+    || !data.task_ids.every(isUuid)
+    || !isDateTime(data.window_start)
+    || !isDateTime(data.window_end)
+  ) return null
+
+  return {
+    task_ids: data.task_ids,
+    window_start: data.window_start,
+    window_end: data.window_end,
+  }
+}
 
 export async function POST(request: NextRequest) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const parsed = BodySchema.safeParse(await request.json().catch(() => null))
-  if (!parsed.success) {
-    return Response.json({ error: 'Invalid request body', details: parsed.error.flatten() }, { status: 400 })
+  const workspaceId = await getUserWorkspaceId(user.id)
+  if (!workspaceId) return Response.json({ error: 'You must belong to a workspace first' }, { status: 400 })
+
+  const parsed = parseBody(await request.json().catch(() => null))
+  if (!parsed) return Response.json({ error: 'Invalid request body' }, { status: 400 })
+
+  const { task_ids, window_start, window_end } = parsed
+  if (new Date(window_end) <= new Date(window_start)) {
+    return Response.json({ error: 'window_end must be after window_start' }, { status: 400 })
   }
+  const admin = createAdminClient()
 
-  const { task_ids, window_start, window_end } = parsed.data
-
-  const { data: tasks, error: tasksError } = await supabase
+  const { data: tasks, error: tasksError } = await admin
     .from('tasks')
-    .select('*, goals(id, name, start_date, end_date, deadline, priority)')
+    .select('*, goals!inner(id, name, start_date, end_date, deadline, priority, sectors!inner(household_id))')
     .in('id', task_ids)
+    .eq('goals.sectors.household_id', workspaceId)
     .eq('is_completed', false)
 
   if (tasksError || !tasks) return Response.json({ error: 'Failed to fetch tasks' }, { status: 500 })
 
-  const { data: constraints } = await supabase
+  const { data: constraints } = await admin
     .from('household_availability_windows')
     .select('user_id, day_of_week, start_time, end_time')
 
@@ -45,13 +72,13 @@ export async function POST(request: NextRequest) {
     created_at: '',
   }))
 
-  const { data: busyBlocks } = await supabase
+  const { data: busyBlocks } = await admin
     .from('household_busy_blocks')
     .select('scheduled_start, scheduled_end')
     .gte('scheduled_start', window_start)
     .lte('scheduled_end', window_end)
 
-  const { data: externalBusyBlocks } = await supabase
+  const { data: externalBusyBlocks } = await admin
     .from('external_calendar_events')
     .select('starts_at, ends_at')
     .eq('user_id', user.id)

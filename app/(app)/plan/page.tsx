@@ -59,6 +59,14 @@ function getTaskForm(editing: Task | null, defaultGoalId: string): TaskForm {
   }
 }
 
+function normalizeDurationParts(hours: number, minutes: number) {
+  const total = Math.max(0, Math.round(hours) * 60 + Math.round(minutes))
+  return {
+    hours: Math.floor(total / 60),
+    minutes: total % 60,
+  }
+}
+
 function SectorDialog({ open, onOpenChange, editing, onSaved }: {
   open: boolean
   onOpenChange: (value: boolean) => void
@@ -245,10 +253,31 @@ function TaskDialog({ open, onOpenChange, editing, goals, defaultGoalId, onSaved
           </div>
           <div className="space-y-2">
             <Label>Duration <span className="text-muted-foreground font-normal">= {durationPreview}</span></Label>
-            <div className="flex gap-2">
-              <Input type="number" min={0} max={23} value={form.durationHours} onChange={e => setForm(f => ({ ...f, durationHours: Math.max(0, Number(e.target.value)) }))} />
-              <Input type="number" min={0} max={59} step={5} value={form.durationMins} onChange={e => setForm(f => ({ ...f, durationMins: Math.max(0, Math.min(59, Number(e.target.value))) }))} />
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">Hours</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  value={form.durationHours}
+                  onChange={e => setForm(f => ({ ...f, durationHours: Math.max(0, Number(e.target.value)) }))}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">Minutes</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  step={5}
+                  value={form.durationMins}
+                  onChange={e => setForm(f => {
+                    const next = normalizeDurationParts(f.durationHours, Number(e.target.value))
+                    return { ...f, durationHours: next.hours, durationMins: next.minutes }
+                  })}
+                />
+              </div>
             </div>
+            <p className="text-xs text-muted-foreground">You can type 90 minutes; it will become 1h 30m automatically.</p>
           </div>
           <div className="space-y-2">
             <Label>Priority</Label>

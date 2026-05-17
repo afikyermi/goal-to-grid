@@ -1,6 +1,8 @@
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { deleteGoogleEvent, updateGoogleEvent } from '@/lib/google/calendar'
 import { recordBehaviorEvent } from '@/lib/behavior/events'
+import { scheduleItemBelongsToUser } from '@/lib/server/workspace'
 import { NextRequest } from 'next/server'
 
 function isOutsideGoalWindow(
@@ -21,6 +23,9 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!(await scheduleItemBelongsToUser(id, user.id))) {
+    return Response.json({ error: 'Schedule item not found' }, { status: 404 })
+  }
 
   const body = await request.json()
   const { status, scheduled_start, scheduled_end } = body
@@ -38,7 +43,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     return Response.json({ error: 'No updates provided' }, { status: 400 })
   }
 
-  const { data, error } = await supabase
+  const admin = createAdminClient()
+  const { data, error } = await admin
     .from('schedule_items')
     .update(updates)
     .eq('id', id)
@@ -91,8 +97,12 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!(await scheduleItemBelongsToUser(id, user.id))) {
+    return Response.json({ error: 'Schedule item not found' }, { status: 404 })
+  }
 
-  const { data: existing } = await supabase
+  const admin = createAdminClient()
+  const { data: existing } = await admin
     .from('schedule_items')
     .select('id, task_id, google_event_id, scheduled_by, scheduled_start, scheduled_end, tasks(goal_id)')
     .eq('id', id)
@@ -106,7 +116,7 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
     }
   }
 
-  const { error } = await supabase.from('schedule_items').delete().eq('id', id)
+  const { error } = await admin.from('schedule_items').delete().eq('id', id)
   if (error) return Response.json({ error: error.message }, { status: 500 })
   await recordBehaviorEvent({
     userId: user.id,
