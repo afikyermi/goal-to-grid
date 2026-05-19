@@ -53,7 +53,8 @@ export interface UserConstraint {
   id: string
   user_id: string
   label: string
-  day_of_week: number | null // 0=Sun..6=Sat, null=every day
+  day_of_week: number | null // 0=Sun..6=Sat, null=every day (legacy — prefer recurrence_days)
+  recurrence_days: number[] | null // explicit array of days, e.g. [1,3] = Mon+Wed; null = use day_of_week fallback
   start_time: string // "HH:MM:SS"
   end_time: string
   created_at: string
@@ -87,6 +88,13 @@ export interface ExternalCalendarEvent {
   is_busy: boolean
   created_at: string
   last_synced_at: string | null
+  metadata: {
+    google_meta?: {
+      is_all_day?: boolean
+      is_transparent?: boolean
+      display_color?: string | null
+    }
+  }
 }
 
 // Privacy-preserving cross-user scheduling types (from DB views)

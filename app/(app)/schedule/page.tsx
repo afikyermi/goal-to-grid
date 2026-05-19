@@ -17,8 +17,8 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { CalendarSync, ChevronLeft, ChevronRight, Pencil, Trash2, Zap, Plus } from 'lucide-react'
-import type { ExternalCalendarEvent, ScheduleItemWithTask, Task, TaskWithGoal } from '@/lib/types'
+import { AlertTriangle, CalendarSync, CheckCircle2, ChevronLeft, ChevronRight, Pencil, Trash2, Zap, Plus } from 'lucide-react'
+import type { ExternalCalendarEvent, ScheduleItemWithTask, Task, TaskWithGoal, UserConstraint } from '@/lib/types'
 import { cn, formatDuration } from '@/lib/utils'
 
 type ViewMode = 'week' | 'agenda'
@@ -144,27 +144,174 @@ function entryPosition(entry: CalendarEntry) {
   }
 }
 
+function entryId(entry: CalendarEntry): string {
+  return entry.kind === 'site' ? entry.item.id : entry.item.google_event_id
+}
+
+function isAllDay(entry: CalendarEntry): boolean {
+  return entry.kind === 'external' && Boolean(entry.item.metadata?.google_meta?.is_all_day)
+}
+
+function isTransparent(entry: CalendarEntry): boolean {
+  return entry.kind === 'external' && Boolean(entry.item.metadata?.google_meta?.is_transparent)
+}
+
+function externalDisplayColor(entry: CalendarEntry): string | null {
+  if (entry.kind !== 'external') return null
+  return entry.item.metadata?.google_meta?.display_color ?? null
+}
+
+// Assigns side-by-side columns to overlapping entries (Google Calendar style).
+function computeColumnLayout(entries: CalendarEntry[]): Map<string, { col: number; totalCols: number }> {
+  if (entries.length === 0) return new Map()
+  const sorted = [...entries].sort((a, b) => entryStart(a).getTime() - entryStart(b).getTime())
+  const n = sorted.length
+  const cols = new Array<number>(n).fill(0)
+  const lastInCol: number[] = []
+
+  for (let i = 0; i < n; i++) {
+    let placed = false
+    for (let c = 0; c < lastInCol.length; c++) {
+      if (entryEnd(sorted[lastInCol[c]]).getTime() <= entryStart(sorted[i]).getTime()) {
+        cols[i] = c
+        lastInCol[c] = i
+        placed = true
+        break
+      }
+    }
+    if (!placed) { cols[i] = lastInCol.length; lastInCol.push(i) }
+  }
+
+  // totalCols = width of this entry's overlap cluster
+  const totalCols = new Array<number>(n).fill(1)
+  for (let i = 0; i < n; i++) {
+    const iS = entryStart(sorted[i]).getTime()
+    const iE = entryEnd(sorted[i]).getTime()
+    let maxCol = cols[i]
+    for (let j = 0; j < n; j++) {
+      if (i !== j && iS < entryEnd(sorted[j]).getTime() && iE > entryStart(sorted[j]).getTime()) {
+        maxCol = Math.max(maxCol, cols[j])
+      }
+    }
+    totalCols[i] = maxCol + 1
+  }
+
+  const result = new Map<string, { col: number; totalCols: number }>()
+  for (let i = 0; i < n; i++) result.set(entryId(sorted[i]), { col: cols[i], totalCols: totalCols[i] })
+  return result
+}
+
+// Shared day-matching predicate for both constraint functions — keeps logic in sync.
+function matchesConstraintDay(c: UserConstraint, dayOfWeek: number): boolean {
+  if (c.recurrence_days && c.recurrence_days.length > 0) {
+    return c.recurrence_days.includes(dayOfWeek)
+  }
+  // Legacy fallback for rows that predate the recurrence_days migration
+  return c.day_of_week === null || c.day_of_week === dayOfWeek
+}
+
+// Returns absolute-positioned blocks for a day's constraint zones (handles midnight-crossing).
+function getConstraintBlocksForDay(
+  constraints: UserConstraint[],
+  dayOfWeek: number,
+  hourHeight: number,
+): Array<{ top: number; height: number; label: string }> {
+  const blocks: Array<{ top: number; height: number; label: string }> = []
+  const dayStartMin = DAY_START_HOUR * 60
+  const dayEndMin   = DAY_END_HOUR   * 60
+
+  for (const c of constraints) {
+    if (!matchesConstraintDay(c, dayOfWeek)) continue
+    const [sh, sm] = c.start_time.split(':').map(Number)
+    const [eh, em] = c.end_time.split(':').map(Number)
+    const cStart = sh * 60 + sm
+    const cEnd   = eh * 60 + em
+
+    if (cEnd > cStart) {
+      // Normal window
+      const visStart = Math.max(cStart, dayStartMin)
+      const visEnd   = Math.min(cEnd,   dayEndMin)
+      if (visStart < visEnd) blocks.push({
+        top:    ((visStart - dayStartMin) / 60) * hourHeight,
+        height: ((visEnd   - visStart)    / 60) * hourHeight,
+        label:  c.label,
+      })
+    } else {
+      // Crosses midnight — two visual blocks
+      const visStartA = Math.max(cStart, dayStartMin)
+      if (visStartA < dayEndMin) blocks.push({
+        top:    ((visStartA - dayStartMin) / 60) * hourHeight,
+        height: ((dayEndMin - visStartA)   / 60) * hourHeight,
+        label:  c.label,
+      })
+      const visEndB = Math.min(cEnd, dayEndMin)
+      if (visEndB > dayStartMin) blocks.push({
+        top:    0,
+        height: ((visEndB - dayStartMin) / 60) * hourHeight,
+        label:  c.label,
+      })
+    }
+  }
+  return blocks
+}
+
+function overlapsConstraint(start: Date, end: Date, constraints: UserConstraint[]): boolean {
+  const dayOfWeek = start.getDay()
+  const startMin = start.getHours() * 60 + start.getMinutes()
+  const endMin = end.getHours() * 60 + end.getMinutes()
+
+  for (const c of constraints) {
+    if (!matchesConstraintDay(c, dayOfWeek)) continue
+    const [sh, sm] = c.start_time.split(':').map(Number)
+    const [eh, em] = c.end_time.split(':').map(Number)
+    const cStart = sh * 60 + sm
+    const cEnd = eh * 60 + em
+
+    if (cEnd > cStart) {
+      if (startMin < cEnd && endMin > cStart) return true
+    } else {
+      if (startMin >= cStart || endMin <= cEnd) return true
+    }
+  }
+  return false
+}
+
 // ── DnD sub-components ────────────────────────────────────────────────────────
 
 function DroppableDayColumn({
-  day, children, onColumnClick, snapPreview,
+  day, children, onColumnClick, snapPreview, constraintBlocks,
 }: {
   day: Date
   children: React.ReactNode
   onColumnClick: (day: Date, e: React.MouseEvent<HTMLDivElement>) => void
   snapPreview: { date: string; startTime: string; top: number; height: number } | null
+  constraintBlocks: Array<{ top: number; height: number; label: string }>
 }) {
   const id = `day-col-${toDateInput(day)}`
-  const { setNodeRef } = useDroppable({ id })
+  const { setNodeRef, isOver } = useDroppable({ id })
   const dateStr = toDateInput(day)
   return (
     <div
       ref={setNodeRef}
       id={id}
       data-calendar-day={dateStr}
-      className="relative border-r last:border-r-0 cursor-crosshair"
+      className={cn('relative border-r last:border-r-0 cursor-crosshair transition-colors', isOver && 'bg-primary/5')}
       onClick={e => onColumnClick(day, e)}
     >
+      {/* Constraint zones — blocked time shown as amber background with label */}
+      {constraintBlocks.map((block, i) => (
+        <div
+          key={i}
+          className="absolute left-0 right-0 bg-amber-100/50 dark:bg-amber-900/25 border-t border-b border-amber-200/60 dark:border-amber-700/40 pointer-events-none z-0 overflow-hidden"
+          style={{ top: `${block.top}px`, height: `${block.height}px` }}
+        >
+          {block.height >= 20 && (
+            <span className="absolute left-1.5 top-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300 truncate max-w-full pr-1">
+              {block.label}
+            </span>
+          )}
+        </div>
+      ))}
       {children}
       {snapPreview?.date === dateStr && (
         <div
@@ -199,6 +346,53 @@ function DraggableTaskCard({ task, onPlace }: { task: Task; onPlace: () => void 
       >
         Place in calendar
       </Button>
+    </div>
+  )
+}
+
+function DraggableMissedCard({
+  item, taskName, wasDate, task, onComplete, onDismiss, onReschedule,
+}: {
+  item: ScheduleItemWithTask
+  taskName: string
+  wasDate: string
+  task: TaskWithGoal | undefined
+  onComplete: () => void
+  onDismiss: () => void
+  onReschedule: () => void
+}) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: `missed-${item.id}`,
+    data: { type: 'missed', item },
+  })
+  return (
+    <div
+      ref={setNodeRef}
+      {...attributes}
+      {...listeners}
+      className={cn(
+        'flex items-center gap-2 rounded border bg-background px-2 py-2 text-xs touch-none select-none',
+        isDragging && 'opacity-40'
+      )}
+    >
+      <div className="min-w-0 flex-1">
+        <p className="truncate font-medium">{taskName}</p>
+        <p className="text-muted-foreground">Was: {wasDate}</p>
+      </div>
+      <div className="flex shrink-0 gap-1" onPointerDown={e => e.stopPropagation()}>
+        <Button size="sm" variant="ghost" className="h-6 w-6 p-0" title="Mark completed"
+          onClick={onComplete}>
+          <CheckCircle2 className="h-3.5 w-3.5 text-primary" />
+        </Button>
+        {task && (
+          <Button size="sm" variant="outline" className="h-6 px-2 text-xs" onClick={onReschedule}>
+            Reschedule
+          </Button>
+        )}
+        <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={onDismiss}>
+          Dismiss
+        </Button>
+      </div>
     </div>
   )
 }
@@ -243,7 +437,7 @@ function DraggableEventBlock({
       id={id}
       style={style}
       className={cn(
-        'absolute left-1 right-1 overflow-hidden rounded-md border px-2 py-1 text-left text-xs leading-tight shadow-sm transition-opacity hover:opacity-90 touch-none select-none',
+        'absolute overflow-hidden rounded-md border px-2 py-1 text-left text-xs leading-tight shadow-sm transition-opacity hover:opacity-90 touch-none select-none',
         cls,
         isDragging && 'opacity-30 z-20',
       )}
@@ -288,6 +482,11 @@ export default function SchedulePage() {
   const [viewMode, setViewMode] = useState<ViewMode>('week')
   const [now, setNow] = useState<Date | null>(null)
   const [syncing, setSyncing] = useState(false)
+  const [constraints, setConstraints] = useState<UserConstraint[]>([])
+  const [constraintWarning, setConstraintWarning] = useState<{
+    message: string
+    onConfirm: () => void | Promise<void>
+  } | null>(null)
 
   // DnD state
   const [activeDragTask, setActiveDragTask] = useState<Task | null>(null)
@@ -295,6 +494,9 @@ export default function SchedulePage() {
   const [snapPreview, setSnapPreview] = useState<{ date: string; startTime: string; top: number; height: number } | null>(null)
   const lastPointerRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
   const dragGrabOffsetYRef = useRef(0)
+  const rafRef = useRef<number | null>(null)
+  const calendarScrollRef = useRef<HTMLDivElement>(null)
+  const didAutoSweep = useRef(false)
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
@@ -330,42 +532,103 @@ export default function SchedulePage() {
   const windowEnd = useMemo(() => addDays(weekStart, 7), [weekStart])
   const days = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart])
 
-  const fetchItems = useCallback(async () => {
-    const [scheduleRes, externalRes] = await Promise.all([
-      fetch(`/api/schedule?week_start=${weekStart.toISOString()}`),
-      fetch(`/api/calendar/external-events?start=${weekStart.toISOString()}&end=${windowEnd.toISOString()}`),
-    ])
-    if (scheduleRes.ok) setItems(await scheduleRes.json())
-    if (externalRes.ok) {
-      const json = await externalRes.json()
+  const fetchScheduleItems = useCallback(async () => {
+    const res = await fetch(`/api/schedule?week_start=${weekStart.toISOString()}`)
+    if (res.ok) setItems(await res.json())
+  }, [weekStart])
+
+  const fetchExternalEvents = useCallback(async () => {
+    const url = `/api/calendar/external-events?start=${weekStart.toISOString()}&end=${windowEnd.toISOString()}`
+    const res = await fetch(url)
+    if (res.ok) {
+      const json = await res.json()
       setExternalEvents(json.events ?? [])
     }
   }, [weekStart, windowEnd])
+
+  // Kept for places that need both refreshed together (e.g. after sync)
+  const fetchItems = useCallback(async () => {
+    await Promise.all([fetchScheduleItems(), fetchExternalEvents()])
+  }, [fetchScheduleItems, fetchExternalEvents])
 
   const fetchCalendarStatus = useCallback(async () => {
     const res = await fetch('/api/calendar/status')
     setCalendarStatus(res.ok ? await res.json() : null)
   }, [])
 
-  // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { fetchItems() }, [fetchItems])
+  // Refetch schedule items whenever the week changes
+  useEffect(() => { void fetchScheduleItems() }, [fetchScheduleItems])
 
+  // Runs once on mount — marks overdue Pending items as Missed, creates new Pending slots
+  useEffect(() => {
+    if (didAutoSweep.current) return
+    didAutoSweep.current = true
+    void (async () => {
+      try {
+        const res = await fetch('/api/schedule/reschedule', { method: 'POST' })
+        const json = res.ok ? await res.json() : null
+        if ((json?.rescheduled ?? 0) > 0) {
+          setSyncMsg(`${json.rescheduled} overdue task(s) automatically rescheduled.`)
+        }
+      } catch { /* silent — non-critical path */ }
+      const r = await fetch(`/api/schedule?week_start=${weekStart.toISOString()}`)
+      if (r.ok) setItems(await r.json())
+    })()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // On mount: tasks, calendar status, constraints, URL params
   useEffect(() => {
     fetch('/api/tasks').then(r => r.ok ? r.json() : []).then(setAllTasks)
-    void Promise.resolve().then(fetchCalendarStatus)
+    void fetchCalendarStatus()
+    fetch('/api/constraints').then(r => r.ok ? r.json() : []).then(setConstraints)
 
-    void Promise.resolve().then(() => {
-      const params = new URLSearchParams(window.location.search)
-      const connected = params.get('calendar_connected')
-      const error = params.get('calendar_error')
-      if (connected) setSyncMsg('Google Calendar connected. Your scheduled tasks can now sync there.')
-      if (error && !error.toLowerCase().includes('not configured') && !error.toLowerCase().includes('oauth')) {
-        setSyncMsg(error)
-      }
+    requestAnimationFrame(() => {
+      calendarScrollRef.current?.scrollTo({ top: 8 * HOUR_HEIGHT, behavior: 'instant' })
     })
+
+    const params = new URLSearchParams(window.location.search)
+    const connected = params.get('calendar_connected')
+    const error = params.get('calendar_error')
+    if (connected) setSyncMsg('Google Calendar connected. Your scheduled tasks can now sync there.')
+    if (error && !error.toLowerCase().includes('not configured') && !error.toLowerCase().includes('oauth')) {
+      setSyncMsg(error)
+    }
   }, [fetchCalendarStatus])
 
-  const scheduledTaskIds = useMemo(() => new Set(items.map(i => i.task_id)), [items])
+  // Auto-import Google events whenever the week changes (read-only, background)
+  useEffect(() => {
+    void fetchCalendarStatus().then(() => {
+      // calendarStatus is stale here — check after fetch via a local flag
+    })
+    void fetch('/api/calendar/status').then(r => r.ok ? r.json() : null).then(status => {
+      if (status?.connected && !status?.needs_reconnect) {
+        void fetch('/api/calendar/import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ timeMin: weekStart.toISOString(), timeMax: windowEnd.toISOString() }),
+        }).then(async r => {
+          const json = await r.json().catch(() => ({}))
+          if (!r.ok) setSyncMsg(`Google Calendar sync failed: ${json.error ?? `HTTP ${r.status}`}`)
+          await fetchExternalEvents()
+        }).catch(err => {
+          setSyncMsg(`Google Calendar error: ${(err as Error).message}`)
+          void fetchExternalEvents()
+        })
+      } else {
+        void fetchExternalEvents()
+      }
+    })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [weekStart])
+
+  const activeItems = useMemo(() => items.filter(i => i.status !== 'Missed'), [items])
+  const missedItems = useMemo(() => items.filter(i => i.status === 'Missed'), [items])
+
+  const scheduledTaskIds = useMemo(
+    () => new Set(activeItems.filter(i => i.status === 'Pending').map(i => i.task_id)),
+    [activeItems]
+  )
   const unscheduledTasks = allTasks.filter(t => !scheduledTaskIds.has(t.id) && !t.is_completed)
   const hours = useMemo(
     () => Array.from({ length: DAY_END_HOUR - DAY_START_HOUR }, (_, i) => DAY_START_HOUR + i),
@@ -375,10 +638,46 @@ export default function SchedulePage() {
     () => Array.from({ length: DAY_END_HOUR - DAY_START_HOUR + 1 }, (_, i) => DAY_START_HOUR + i),
     []
   )
-  const allEntries = useMemo<CalendarEntry[]>(() => [
-    ...items.map(item => ({ kind: 'site' as const, item })),
-    ...externalEvents.map(item => ({ kind: 'external' as const, item })),
-  ].sort((a, b) => entryStart(a).getTime() - entryStart(b).getTime()), [externalEvents, items])
+  const allEntries = useMemo<CalendarEntry[]>(() => {
+    return [
+      ...activeItems.map(item => ({ kind: 'site' as const, item })),
+      ...externalEvents.map(item => ({ kind: 'external' as const, item })),
+    ].sort((a, b) => entryStart(a).getTime() - entryStart(b).getTime())
+  }, [externalEvents, activeItems])
+  const hasAnyAllDay = useMemo(() => allEntries.some(isAllDay), [allEntries])
+
+  // Pre-compute per-day column layouts (O(k²) × 7 — memoized so it only runs when entries change)
+  const perDayLayouts = useMemo(() => {
+    const map = new Map<string, Map<string, { col: number; totalCols: number }>>()
+    for (const day of days) {
+      const dayKey = day.toISOString()
+      const dayEntries = allEntries.filter(entry => {
+        const d = entryStart(entry)
+        return (
+          d.getDate() === day.getDate() &&
+          d.getMonth() === day.getMonth() &&
+          d.getFullYear() === day.getFullYear()
+        )
+      })
+      const timedEntries = dayEntries.filter(e => !isAllDay(e))
+      const blockingEntries = timedEntries.filter(e => !isTransparent(e))
+      const layout = computeColumnLayout(blockingEntries)
+      timedEntries.filter(isTransparent).forEach(e =>
+        layout.set(entryId(e), { col: 0, totalCols: 1 })
+      )
+      map.set(dayKey, layout)
+    }
+    return map
+  }, [allEntries, days])
+
+  // Pre-compute constraint blocks for all 7 days (only recalculates when constraints or week changes)
+  const perDayConstraintBlocks = useMemo(() => {
+    const map = new Map<string, Array<{ top: number; height: number; label: string }>>()
+    for (const day of days) {
+      map.set(day.toISOString(), getConstraintBlocksForDay(constraints, day.getDay(), HOUR_HEIGHT))
+    }
+    return map
+  }, [constraints, days])
 
   function entriesForDay(day: Date): CalendarEntry[] {
     return allEntries.filter(entry => {
@@ -478,7 +777,11 @@ export default function SchedulePage() {
     else if (json.detail) setSyncMsg(json.detail)
     setManualOpen(false)
     setEditingItem(null)
-    await fetchItems()
+    if (editingItem) {
+      setItems(prev => prev.map(i => i.id === editingItem.id ? json as ScheduleItemWithTask : i))
+    } else {
+      setItems(prev => [...prev, json.item as ScheduleItemWithTask])
+    }
   }
 
   async function updateStatus(id: string, status: string) {
@@ -496,9 +799,40 @@ export default function SchedulePage() {
   }
 
   async function deleteSiteItem(id: string) {
-    await fetch(`/api/schedule/${id}`, { method: 'DELETE' })
-    setItems(prev => prev.filter(item => item.id !== id))
+    const snapshot = items.find(item => item.id === id) ?? null
+    setItems(prev => prev.filter(item => item.id !== id))   // optimistic — instant
     setSelected(null)
+    const res = await fetch(`/api/schedule/${id}`, { method: 'DELETE' })
+    if (!res.ok && snapshot) {
+      setItems(prev =>
+        prev.some(i => i.id === id)
+          ? prev
+          : [...prev, snapshot].sort(
+              (a, b) => new Date(a.scheduled_start).getTime() - new Date(b.scheduled_start).getTime()
+            )
+      )
+      setSyncMsg('Failed to remove task from calendar.')
+    }
+  }
+
+  async function completeMissedItem(item: ScheduleItemWithTask) {
+    setItems(prev => prev.map(i => i.id === item.id ? { ...i, status: 'Done' } : i))
+    const [schedRes, taskRes] = await Promise.all([
+      fetch(`/api/schedule/${item.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'Done' }),
+      }),
+      fetch(`/api/tasks/${item.task_id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_completed: true }),
+      }),
+    ])
+    if (!schedRes.ok || !taskRes.ok) {
+      setItems(prev => prev.map(i => i.id === item.id ? { ...i, status: 'Missed' } : i))
+      setSyncMsg('Failed to mark task as completed.')
+    }
   }
 
   async function handleSync() {
@@ -509,7 +843,7 @@ export default function SchedulePage() {
       const res = await fetch('/api/calendar/sync', { method: 'POST' })
       const json = await res.json()
       setSyncMsg(json.detail ? `${json.message} ${json.detail}` : json.message ?? 'Google Calendar sync finished.')
-      await fetchItems()
+      await fetchScheduleItems()
     } finally {
       setTimeout(() => setSyncing(false), 10000)
     }
@@ -531,7 +865,7 @@ export default function SchedulePage() {
         ? `Google Calendar refreshed: ${json.imported} busy event(s) loaded for this week.`
         : 'Google Calendar refreshed. No busy events were found for this week.'
       )
-      await fetchItems()
+      await fetchExternalEvents()
     } finally {
       setTimeout(() => setSyncing(false), 10000)
     }
@@ -606,7 +940,7 @@ export default function SchedulePage() {
     if (json.warning) setSyncMsg(json.warning)
     setSuggestedSlots(prev => prev.filter(row => row.task_id !== slot.task_id))
     setTaskIds(prev => prev.filter(id => id !== slot.task_id))
-    await fetchItems()
+    if (json.item) setItems(prev => [...prev, json.item as ScheduleItemWithTask])
   }
 
   async function sendTimeFeedback(value: 'too_short' | 'accurate' | 'too_long') {
@@ -630,24 +964,68 @@ export default function SchedulePage() {
   // ── DnD handlers ──────────────────────────────────────────────────────────
 
   function handleDragMove() {
-    const durMin = activeDragTask?.duration_min
-      ?? (activeDragItem
-          ? Math.max(SNAP_MINUTES, Math.round(
-              (new Date(activeDragItem.scheduled_end).getTime() - new Date(activeDragItem.scheduled_start).getTime()) / 60000
-            ))
-          : null)
-    if (durMin === null) { setSnapPreview(null); return }
-    const offsetY = activeDragItem ? dragGrabOffsetYRef.current : 0
-    const target = getDropTargetFromPointer(durMin, offsetY)
-    if (!target) { setSnapPreview(null); return }
-    const [hStr, mStr] = target.startTime.split(':')
-    const startMin = (parseInt(hStr, 10) - DAY_START_HOUR) * 60 + parseInt(mStr, 10)
-    setSnapPreview({
-      date: target.date,
-      startTime: target.startTime,
-      top: (startMin / 60) * HOUR_HEIGHT,
-      height: Math.max(28, (durMin / 60) * HOUR_HEIGHT),
+    if (rafRef.current !== null) return
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = null
+      const durMin = activeDragTask?.duration_min
+        ?? (activeDragItem
+            ? Math.max(SNAP_MINUTES, Math.round(
+                (new Date(activeDragItem.scheduled_end).getTime() - new Date(activeDragItem.scheduled_start).getTime()) / 60000
+              ))
+            : null)
+      if (durMin === null) { setSnapPreview(null); return }
+      const offsetY = activeDragItem ? dragGrabOffsetYRef.current : 0
+      const target = getDropTargetFromPointer(durMin, offsetY)
+      if (!target) { setSnapPreview(null); return }
+      const [hStr, mStr] = target.startTime.split(':')
+      const startMin = (parseInt(hStr, 10) - DAY_START_HOUR) * 60 + parseInt(mStr, 10)
+      setSnapPreview({
+        date: target.date,
+        startTime: target.startTime,
+        top: (startMin / 60) * HOUR_HEIGHT,
+        height: Math.max(28, (durMin / 60) * HOUR_HEIGHT),
+      })
     })
+  }
+
+  async function doPlaceTask(task: Task, targetStart: Date, targetEnd: Date) {
+    const tempId = `temp-${Date.now()}`
+    const tempItem: ScheduleItemWithTask = {
+      id: tempId,
+      task_id: task.id,
+      scheduled_by: null,
+      scheduled_start: targetStart.toISOString(),
+      scheduled_end: targetEnd.toISOString(),
+      status: 'Pending',
+      google_event_id: null,
+      created_at: new Date().toISOString(),
+      tasks: {
+        id: task.id,
+        name: task.name,
+        duration_min: task.duration_min,
+        priority: task.priority,
+        goal_id: task.goal_id,
+        goals: (task as TaskWithGoal).goals ?? null,
+      },
+    }
+    setItems(prev => [...prev, tempItem])
+    const res = await fetch('/api/schedule', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        task_id: task.id,
+        scheduled_start: targetStart.toISOString(),
+        scheduled_end: targetEnd.toISOString(),
+      }),
+    })
+    const json = await res.json()
+    if (!res.ok) {
+      setItems(prev => prev.filter(i => i.id !== tempId))
+      setSyncMsg(json.error ?? 'Failed to place task on the calendar.')
+      return
+    }
+    setItems(prev => prev.map(i => i.id === tempId ? json.item as ScheduleItemWithTask : i))
+    setSyncMsg(json.warning ?? null)
   }
 
   function handleDragStart(event: DragStartEvent) {
@@ -671,6 +1049,7 @@ export default function SchedulePage() {
   }
 
   async function handleDragEnd(event: DragEndEvent) {
+    if (rafRef.current !== null) { cancelAnimationFrame(rafRef.current); rafRef.current = null }
     setActiveDragTask(null)
     setActiveDragItem(null)
     setSnapPreview(null)
@@ -680,27 +1059,50 @@ export default function SchedulePage() {
     const type = active.data.current?.type as string
 
     if (type === 'task') {
-      // Open manual dialog pre-filled — user confirms before saving
       const task = active.data.current?.task as Task
       const target = getDropTargetFromPointer(task.duration_min)
       if (!target) return
       const end = new Date(target.start.getTime() + task.duration_min * 60000)
-      const res = await fetch('/api/schedule', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          task_id: task.id,
-          scheduled_start: target.start.toISOString(),
-          scheduled_end: end.toISOString(),
-        }),
-      })
-      const json = await res.json()
-      if (!res.ok) {
-        setSyncMsg(json.error ?? 'Failed to place task on the calendar.')
+
+      if (overlapsConstraint(target.start, end, constraints)) {
+        setConstraintWarning({
+          message: `"${task.name}" overlaps a blocked constraint window. Schedule it here anyway?`,
+          onConfirm: () => void doPlaceTask(task, target.start, end),
+        })
         return
       }
-      setSyncMsg(json.warning ?? json.detail ?? 'Task placed on the calendar.')
-      await fetchItems()
+      void doPlaceTask(task, target.start, end)
+    } else if (type === 'missed') {
+      const missedItem = active.data.current?.item as ScheduleItemWithTask
+      const durationMs = new Date(missedItem.scheduled_end).getTime() - new Date(missedItem.scheduled_start).getTime()
+      const durationMin = Math.max(SNAP_MINUTES, Math.round(durationMs / 60000))
+      const target = getDropTargetFromPointer(durationMin)
+      if (!target) return
+      const newEnd = new Date(target.start.getTime() + durationMs)
+
+      setItems(prev => prev.map(i =>
+        i.id === missedItem.id
+          ? { ...i, status: 'Pending', scheduled_start: target.start.toISOString(), scheduled_end: newEnd.toISOString() }
+          : i
+      ))
+
+      const res = await fetch(`/api/schedule/${missedItem.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status: 'Pending',
+          scheduled_start: target.start.toISOString(),
+          scheduled_end: newEnd.toISOString(),
+        }),
+      })
+      if (!res.ok) {
+        setItems(prev => prev.map(i =>
+          i.id === missedItem.id
+            ? { ...i, status: 'Missed', scheduled_start: missedItem.scheduled_start, scheduled_end: missedItem.scheduled_end }
+            : i
+        ))
+        setSyncMsg('Failed to reschedule missed task.')
+      }
     } else if (type === 'item') {
       // Immediate PATCH — preserve duration, change day + time
       const item = (active.data.current?.entry as CalendarEntry & { kind: 'site' }).item
@@ -730,7 +1132,12 @@ export default function SchedulePage() {
         body: JSON.stringify({ scheduled_start: start.toISOString(), scheduled_end: end.toISOString() }),
       })
       if (!res.ok) {
-        await fetchItems() // revert on failure
+        // Local rollback — restore original times without a full refetch
+        setItems(prev => prev.map(i =>
+          i.id === item.id
+            ? { ...i, scheduled_start: item.scheduled_start, scheduled_end: item.scheduled_end }
+            : i
+        ))
         setSyncMsg('Failed to move task.')
         return
       }
@@ -747,6 +1154,17 @@ export default function SchedulePage() {
       return `This task belongs to "${task.goals.name}", planned for ${task.goals.start_date} - ${task.goals.end_date}. You can still schedule it here.`
     }
     return null
+  })()
+
+  const manualConstraintWarning = (() => {
+    if (!manualForm.date || !manualForm.start_time) return null
+    const dm = manualForm.durationHours * 60 + manualForm.durationMins
+    if (dm <= 0) return null
+    const start = dateTimeLocal(manualForm.date, manualForm.start_time)
+    const end = new Date(start.getTime() + dm * 60000)
+    return overlapsConstraint(start, end, constraints)
+      ? 'This time slot overlaps a blocked constraint window. You can still schedule here — constraints are soft boundaries.'
+      : null
   })()
 
   return (
@@ -784,7 +1202,7 @@ export default function SchedulePage() {
                 </p>
                 <p className="mt-0.5 text-sm text-muted-foreground">
                   {calendarStatus.connected
-                    ? 'Google events appear here as read-only busy blocks. Goal-to-Grid tasks can be synced to Google.'
+                    ? 'Google events load automatically each week. Press "Sync to Google" to push your tasks to Google Calendar.'
                     : calendarStatus.configured && calendarStatus.migration_applied
                       ? 'Connect your calendar to see busy time and sync scheduled tasks.'
                       : 'The schedule works inside Goal-to-Grid. Google sync is not available in this environment yet.'}
@@ -794,11 +1212,8 @@ export default function SchedulePage() {
               <div className="flex flex-wrap gap-2">
                 {calendarStatus.connected ? (
                   <>
-                    <Button variant="outline" onClick={handleImportGoogleEvents} disabled={syncing}>
-                      <CalendarSync className="h-4 w-4 mr-2" />{syncing ? 'Syncing...' : 'Refresh Google'}
-                    </Button>
                     <Button variant="outline" onClick={handleSync} disabled={syncing}>
-                      <CalendarSync className="h-4 w-4 mr-2" />{syncing ? 'Syncing...' : 'Sync Tasks'}
+                      <CalendarSync className="h-4 w-4 mr-2" />{syncing ? 'Syncing...' : 'Sync to Google'}
                     </Button>
                     <a href="/api/calendar/connect">
                       <Button variant="outline">Reconnect</Button>
@@ -892,8 +1307,35 @@ export default function SchedulePage() {
                 })}
               </div>
 
+              {/* All-day event row */}
+              {hasAnyAllDay && (
+                <div className="grid grid-cols-[64px_repeat(7,minmax(120px,1fr))] border-b">
+                  <div className="border-r px-1 py-1 text-right text-[10px] text-muted-foreground pt-2">all‑day</div>
+                  {days.map(day => {
+                    const adEntries = entriesForDay(day).filter(isAllDay)
+                    return (
+                      <div key={day.toISOString()} className="border-r p-1 min-h-[28px] last:border-r-0 space-y-0.5">
+                        {adEntries.map(entry => {
+                          const color = externalDisplayColor(entry)
+                          return (
+                            <button
+                              key={entryId(entry)}
+                              onClick={() => setSelected(entry)}
+                              className="block w-full truncate rounded px-1.5 py-0.5 text-left text-[11px] font-medium text-white hover:opacity-90"
+                              style={{ backgroundColor: color ?? '#3b82f6' }}
+                            >
+                              {entryTitle(entry)}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+
               {/* Time grid */}
-              <div className="max-h-[760px] overflow-auto">
+              <div className="max-h-[760px] overflow-auto" ref={calendarScrollRef}>
                 <div
                   className="grid grid-cols-[64px_repeat(7,minmax(120px,1fr))]"
                   style={{ height: `${(DAY_END_HOUR - DAY_START_HOUR) * HOUR_HEIGHT}px` }}
@@ -911,18 +1353,27 @@ export default function SchedulePage() {
                   {/* Day columns */}
                   {days.map(day => {
                     const dayEntries = entriesForDay(day)
+                    const timedEntries = dayEntries.filter(e => !isAllDay(e))
+                    const layout = perDayLayouts.get(day.toISOString()) ?? new Map()
+                    const constraintBlocks = perDayConstraintBlocks.get(day.toISOString()) ?? []
                     const isToday = now ? now.toDateString() === day.toDateString() : false
                     const nowMinutes = now ? (now.getHours() - DAY_START_HOUR) * 60 + now.getMinutes() : -1
                     const nowTop = (nowMinutes / 60) * HOUR_HEIGHT
                     const showNowLine = isToday && nowMinutes >= 0 && nowMinutes <= (DAY_END_HOUR - DAY_START_HOUR) * 60
 
                     return (
-                      <DroppableDayColumn key={day.toISOString()} day={day} onColumnClick={handleColumnClick} snapPreview={snapPreview}>
+                      <DroppableDayColumn
+                        key={day.toISOString()}
+                        day={day}
+                        onColumnClick={handleColumnClick}
+                        snapPreview={snapPreview}
+                        constraintBlocks={constraintBlocks}
+                      >
                         {/* Hour windows */}
                         {hours.map(hour => (
                           <div
                             key={hour}
-                            className="absolute left-0 right-0 border-t border-muted/70 bg-background hover:bg-muted/20"
+                            className="absolute left-0 right-0 border-t border-muted/70 bg-transparent hover:bg-muted/20"
                             style={{ top: `${(hour - DAY_START_HOUR) * HOUR_HEIGHT}px`, height: `${HOUR_HEIGHT}px` }}
                           />
                         ))}
@@ -937,19 +1388,40 @@ export default function SchedulePage() {
                           </div>
                         )}
 
-                        {/* Calendar events */}
-                        {dayEntries.map(entry => {
+                        {/* Calendar events — side-by-side when overlapping */}
+                        {timedEntries.map(entry => {
                           const position = entryPosition(entry)
-                          const colorClass = entry.kind === 'external'
-                            ? 'bg-zinc-100 border-zinc-300 text-zinc-700'
-                            : STATUS_COLORS[entry.item.status]
+                          const { col, totalCols } = layout.get(entryId(entry)) ?? { col: 0, totalCols: 1 }
+                          const GAP = 2
+                          const colW = 100 / totalCols
+                          const leftPct  = col * colW
+                          const widthPct = colW
+                          const color = externalDisplayColor(entry)
+                          const colorClass = entry.kind !== 'external'
+                            ? STATUS_COLORS[entry.item.status]
+                            : isTransparent(entry)
+                              ? 'z-0 border-dashed opacity-70 pointer-events-none'
+                              : color
+                                ? ''
+                                : 'bg-blue-50 border-blue-300 text-blue-800 dark:bg-blue-950 dark:border-blue-700 dark:text-blue-200'
+                          const extraStyle: React.CSSProperties = (() => {
+                            if (entry.kind !== 'external' || !color) return {}
+                            if (isTransparent(entry)) return { borderColor: color }
+                            return { backgroundColor: `${color}22`, borderColor: color, color }
+                          })()
                           return (
                             <DraggableEventBlock
                               key={`${entry.kind}-${entry.kind === 'site' ? entry.item.id : entry.item.google_event_id}`}
                               entry={entry}
                               onClick={() => setSelected(entry)}
-                              className={colorClass}
-                              style={{ top: `${position.top}px`, height: `${position.height}px` }}
+                              className={cn(colorClass, !isTransparent(entry) && 'hover:z-10')}
+                              style={{
+                                top: `${position.top}px`,
+                                height: `${position.height}px`,
+                                left: `calc(${leftPct}% + ${GAP}px)`,
+                                width: `calc(${widthPct}% - ${GAP * 2}px)`,
+                                ...extraStyle,
+                              }}
                             />
                           )
                         })}
@@ -1007,6 +1479,39 @@ export default function SchedulePage() {
                 )}
               </div>
             </UnscheduledDropZone>
+
+            {missedItems.length > 0 && (
+              <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3">
+                <h2 className="flex items-center gap-2 text-sm font-semibold text-destructive">
+                  <AlertTriangle className="h-4 w-4" />
+                  Missed / Overdue ({missedItems.length})
+                </h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  These tasks passed their scheduled window. Drag onto the calendar or use Reschedule.
+                </p>
+                <div className="mt-3 max-h-[280px] space-y-2 overflow-auto">
+                  {missedItems.map(item => {
+                    const taskName = (item.tasks as unknown as { name: string } | null)?.name ?? 'Task'
+                    const task = allTasks.find(t => t.id === item.task_id)
+                    const wasDate = new Date(item.scheduled_start).toLocaleDateString(undefined, {
+                      month: 'short', day: 'numeric',
+                    })
+                    return (
+                      <DraggableMissedCard
+                        key={item.id}
+                        item={item}
+                        taskName={taskName}
+                        wasDate={wasDate}
+                        task={task}
+                        onComplete={() => void completeMissedItem(item)}
+                        onDismiss={() => void deleteSiteItem(item.id)}
+                        onReschedule={() => task && openManual(task)}
+                      />
+                    )
+                  })}
+                </div>
+              </div>
+            )}
 
             <div className="rounded-lg border p-3 text-xs text-muted-foreground space-y-1">
               <p><span className="font-semibold text-foreground">Drag tasks</span> from the list above onto any 15-minute slot.</p>
@@ -1067,7 +1572,7 @@ export default function SchedulePage() {
           <DialogContent>
             <DialogHeader>
               <DialogTitle>{editingItem ? 'Edit Scheduled Time' : 'Plan Task Manually'}</DialogTitle>
-              <DialogDescription>Choose the exact time. The event will be synced to Google Calendar.</DialogDescription>
+              <DialogDescription>Choose the exact time. Press &quot;Sync to Google&quot; to push changes to Google Calendar.</DialogDescription>
             </DialogHeader>
             <form onSubmit={handleManualSubmit} className="space-y-4">
               <div className="space-y-2">
@@ -1123,10 +1628,39 @@ export default function SchedulePage() {
                   {manualGoalWarning}
                 </div>
               )}
+              {manualConstraintWarning && (
+                <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-400">
+                  {manualConstraintWarning}
+                </div>
+              )}
               <Button type="submit" className="w-full">{editingItem ? 'Save Time' : 'Place Task'}</Button>
             </form>
           </DialogContent>
         </Dialog>
+
+        {/* Constraint warning dialog */}
+        {constraintWarning && (
+          <Dialog open={!!constraintWarning} onOpenChange={() => setConstraintWarning(null)}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Constraint Window Conflict</DialogTitle>
+                <DialogDescription>{constraintWarning.message}</DialogDescription>
+              </DialogHeader>
+              <div className="flex justify-end gap-2 pt-2">
+                <Button variant="outline" onClick={() => setConstraintWarning(null)}>Cancel</Button>
+                <Button
+                  onClick={() => {
+                    const fn = constraintWarning.onConfirm
+                    setConstraintWarning(null)
+                    void fn()
+                  }}
+                >
+                  Schedule Anyway
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+        )}
 
         {/* Suggest slots dialog */}
         <Dialog open={schedulerOpen} onOpenChange={setSchedulerOpen}>

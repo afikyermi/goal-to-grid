@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import Sidebar from '@/components/Sidebar'
+import { ActiveGoalWrapper } from '@/components/ActiveGoalWrapper'
 
 type AppProfile = {
   display_name: string | null
@@ -72,7 +73,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         householdName={householdName}
         isAdmin={isAdmin}
       />
-      <main className="flex-1 overflow-auto p-6">{children}</main>
+      <main className="flex-1 overflow-auto p-6">
+        <ActiveGoalWrapper>{children}</ActiveGoalWrapper>
+      </main>
     </div>
   )
 }

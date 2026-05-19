@@ -1,3 +1,4 @@
+import { createAdminClient } from '@/lib/supabase/admin'
 import { createClient } from '@/lib/supabase/server'
 import { NextRequest } from 'next/server'
 
@@ -9,7 +10,10 @@ export async function GET(request: NextRequest) {
   const start = request.nextUrl.searchParams.get('start')
   const end = request.nextUrl.searchParams.get('end')
 
-  let query = supabase
+  // Use admin client + explicit user filter — same pattern as schedule/route.ts GET.
+  // Avoids RLS misconfiguration silently returning empty results.
+  const admin = createAdminClient()
+  let query = admin
     .from('external_calendar_events')
     .select('*')
     .eq('user_id', user.id)

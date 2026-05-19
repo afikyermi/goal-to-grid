@@ -46,10 +46,13 @@ export async function POST(request: NextRequest) {
   const admin = createAdminClient()
 
   const body = await request.json()
-  const { label, day_of_week, start_time, end_time } = body
+  const { label, recurrence_days, start_time, end_time } = body
 
   if (!label || !start_time || !end_time) {
     return Response.json({ error: 'label, start_time, and end_time are required' }, { status: 400 })
+  }
+  if (!recurrence_days || !Array.isArray(recurrence_days) || recurrence_days.length === 0) {
+    return Response.json({ error: 'recurrence_days must be a non-empty array of day numbers (0=Sun..6=Sat)' }, { status: 400 })
   }
 
   const { data, error } = await admin
@@ -57,7 +60,7 @@ export async function POST(request: NextRequest) {
     .insert({
       user_id: user.id,
       label,
-      day_of_week: day_of_week ?? null,
+      recurrence_days,
       start_time,
       end_time,
     })

@@ -20,46 +20,10 @@ const DEFAULT_COUNTS: AllEntityCounts = {
 }
 
 async function fetchCounts(): Promise<AllEntityCounts> {
-  const supabase = createClient()
-  const [
-    households,
-    profiles,
-    sectors,
-    userConstraints,
-    goals,
-    priorityLevels,
-    tasks,
-    scheduleItems,
-    calendarConnections,
-    externalCalendarEvents,
-    behaviorEvents,
-  ] = await Promise.all([
-    supabase.from('households').select('id', { count: 'exact', head: true }),
-    supabase.from('profiles').select('id', { count: 'exact', head: true }),
-    supabase.from('sectors').select('id', { count: 'exact', head: true }),
-    supabase.from('user_constraints').select('id', { count: 'exact', head: true }),
-    supabase.from('goals').select('id', { count: 'exact', head: true }),
-    supabase.from('priority_levels').select('id', { count: 'exact', head: true }),
-    supabase.from('tasks').select('id', { count: 'exact', head: true }),
-    supabase.from('schedule_items').select('id', { count: 'exact', head: true }),
-    supabase.from('calendar_connections').select('id', { count: 'exact', head: true }),
-    supabase.from('external_calendar_events').select('id', { count: 'exact', head: true }),
-    supabase.from('user_behavior_events').select('id', { count: 'exact', head: true }),
-  ])
-
-  return {
-    households: households.count ?? 0,
-    profiles: profiles.count ?? 0,
-    sectors: sectors.count ?? 0,
-    user_constraints: userConstraints.count ?? 0,
-    goals: goals.count ?? 0,
-    priority_levels: priorityLevels.count ?? 0,
-    tasks: tasks.count ?? 0,
-    schedule_items: scheduleItems.count ?? 0,
-    calendar_connections: calendarConnections.count ?? 0,
-    external_calendar_events: externalCalendarEvents.count ?? 0,
-    user_behavior_events: behaviorEvents.count ?? 0,
-  }
+  const res = await fetch('/api/admin/architecture/counts')
+  if (!res.ok) return DEFAULT_COUNTS
+  const { counts } = await res.json()
+  return { ...DEFAULT_COUNTS, ...counts }
 }
 
 export function LiveArchitectureDashboard({ initialCounts }: { initialCounts: Partial<AllEntityCounts> }) {

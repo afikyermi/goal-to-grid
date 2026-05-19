@@ -3,6 +3,12 @@ import { createClient } from '@/lib/supabase/server'
 import { listGoogleEvents } from '@/lib/google/calendar'
 import { NextRequest } from 'next/server'
 
+const GOOGLE_COLOR_HEX: Record<string, string> = {
+  '1': '#7986cb', '2': '#33b679', '3': '#8e24aa', '4': '#e67c73',
+  '5': '#f6c026', '6': '#f5511d', '7': '#039be5', '8': '#616161',
+  '9': '#3f51b5', '10': '#0b8043', '11': '#d60000',
+}
+
 type ExternalEventRow = {
   user_id: string
   provider: string
@@ -12,8 +18,10 @@ type ExternalEventRow = {
   starts_at: string
   ends_at: string
   is_busy: boolean
-  raw_payload: Record<string, unknown>
   last_synced_at: string
+  metadata: {
+    google_meta: { is_all_day: boolean; is_transparent: boolean; display_color: string | null }
+  }
 }
 
 function eventDateTime(value: unknown): string | null {
@@ -24,6 +32,18 @@ function eventDateTime(value: unknown): string | null {
     : typeof record.date === 'string'
       ? `${record.date}T00:00:00.000Z`
       : null
+}
+
+function isSelfDeclined(event: Record<string, unknown>): boolean {
+  const attendees = event.attendees as Array<Record<string, unknown>> | undefined
+  if (!attendees?.length) return false
+  const self = attendees.find(a => a.self === true)
+  return self?.responseStatus === 'declined'
+}
+
+function isAllDayEvent(event: Record<string, unknown>): boolean {
+  const start = event.start as Record<string, unknown> | undefined
+  return Boolean(start?.date && !start?.dateTime)
 }
 
 function isGoalToGridManagedEvent(event: Record<string, unknown>): boolean {
@@ -48,6 +68,7 @@ export async function POST(request: NextRequest) {
   try {
     googleEvents = await listGoogleEvents(user.id, timeMin, timeMax)
   } catch (err) {
+    console.error('[calendar/import] listGoogleEvents failed:', err)
     return Response.json(
       { error: err instanceof Error ? err.message : 'Failed to import Google Calendar events' },
       { status: 502 }
@@ -55,14 +76,28 @@ export async function POST(request: NextRequest) {
   }
 
   const rows: ExternalEventRow[] = []
+  let totalFromGoogle = 0
+  let filteredCancelled = 0
+  let filteredDeclined = 0
+  let filteredManaged = 0
+  let filteredMissingFields = 0
+
+  console.log(`[calendar/import] Google returned ${googleEvents.items?.length ?? 0} events for window ${timeMin} → ${timeMax}`)
 
   for (const event of googleEvents.items ?? []) {
-    if (event.status === 'cancelled') continue
-    if (isGoalToGridManagedEvent(event)) continue
+    totalFromGoogle++
+    if (event.status === 'cancelled') { filteredCancelled++; continue }
+    if (isSelfDeclined(event)) { filteredDeclined++; continue }
+    if (isGoalToGridManagedEvent(event)) { filteredManaged++; continue }
 
     const startsAt = eventDateTime(event.start)
     const endsAt = eventDateTime(event.end)
-    if (!event.id || !startsAt || !endsAt) continue
+    if (!event.id || !startsAt || !endsAt) { filteredMissingFields++; continue }
+
+    const colorId = typeof event.colorId === 'string' ? event.colorId : null
+    const displayColor = colorId
+      ? (GOOGLE_COLOR_HEX[colorId] ?? null)
+      : (typeof event._calBgColor === 'string' ? event._calBgColor : null)
 
     rows.push({
       user_id: user.id,
@@ -73,8 +108,14 @@ export async function POST(request: NextRequest) {
       starts_at: startsAt,
       ends_at: endsAt,
       is_busy: event.transparency !== 'transparent',
-      raw_payload: event,
       last_synced_at: new Date().toISOString(),
+      metadata: {
+        google_meta: {
+          is_all_day: isAllDayEvent(event),
+          is_transparent: event.transparency === 'transparent',
+          display_color: displayColor,
+        },
+      },
     })
   }
 
@@ -91,12 +132,28 @@ export async function POST(request: NextRequest) {
 
   if (deleteError) return Response.json({ error: deleteError.message }, { status: 500 })
 
-  if (rows.length === 0) return Response.json({ imported: 0 })
+  if (rows.length === 0) return Response.json({ imported: 0, total_from_google: totalFromGoogle, filtered_cancelled: filteredCancelled, filtered_declined: filteredDeclined, filtered_managed: filteredManaged, filtered_missing_fields: filteredMissingFields })
 
   const { error } = await admin
     .from('external_calendar_events')
-    .upsert(rows, { onConflict: 'user_id,provider,calendar_id,google_event_id' })
+    .upsert(rows, { onConflict: 'user_id,google_event_id' })
 
   if (error) return Response.json({ error: error.message }, { status: 500 })
-  return Response.json({ imported: rows.length })
+
+  const { count: verifiedInDb } = await admin
+    .from('external_calendar_events')
+    .select('*', { count: 'exact', head: true })
+    .eq('user_id', user.id)
+    .gte('starts_at', timeMin)
+    .lt('starts_at', timeMax)
+
+  return Response.json({
+    imported: rows.length,
+    verified_in_db: verifiedInDb ?? 0,
+    total_from_google: totalFromGoogle,
+    filtered_cancelled: filteredCancelled,
+    filtered_declined: filteredDeclined,
+    filtered_managed: filteredManaged,
+    filtered_missing_fields: filteredMissingFields,
+  })
 }

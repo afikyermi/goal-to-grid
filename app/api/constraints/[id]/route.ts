@@ -10,7 +10,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   const admin = createAdminClient()
 
   const body = await request.json()
-  const { label, day_of_week, start_time, end_time } = body
+  const { label, recurrence_days, start_time, end_time } = body
 
   const { data: existing, error: existingError } = await admin
     .from('user_constraints')
@@ -25,7 +25,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     .from('user_constraints')
     .update({
       label,
-      day_of_week: day_of_week ?? null,
+      recurrence_days: recurrence_days ?? null,
       start_time,
       end_time,
     })

@@ -1,21 +1,14 @@
-import Link from 'next/link'
-import { redirect } from 'next/navigation'
-import { Plus } from 'lucide-react'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getUserWorkspaceId } from '@/lib/server/workspace'
-import { Button } from '@/components/ui/button'
-import { LiveDashboard, type DashboardData } from '@/components/LiveDashboard'
 
-export const revalidate = 30
-
-export default async function DashboardPage() {
+export async function GET() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/login')
+  if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 })
 
   const workspaceId = await getUserWorkspaceId(user.id)
-  if (!workspaceId) redirect('/login')
+  if (!workspaceId) return Response.json({ error: 'No workspace' }, { status: 403 })
 
   const admin = createAdminClient()
   const now = new Date()
@@ -57,11 +50,14 @@ export default async function DashboardPage() {
       .lt('scheduled_start', weekEnd.toISOString()),
   ])
 
-  type RawTask = { id: string; name: string; duration_min: number | null; priority: number; is_completed: boolean }
-  type RawGoal = { id: string; name: string; priority: number; start_date: string; end_date: string; tasks: RawTask[] | null }
-  type RawSector = { id: string; name: string; goals: RawGoal[] | null }
+  const sectors = (sectorsRaw ?? []) as Array<{
+    id: string; name: string;
+    goals: Array<{
+      id: string; name: string; priority: number; start_date: string; end_date: string;
+      tasks: Array<{ id: string; name: string; duration_min: number | null; priority: number; is_completed: boolean }> | null
+    }> | null
+  }>
 
-  const sectors = (sectorsRaw ?? []) as unknown as RawSector[]
   const allGoals = sectors.flatMap(s => s.goals ?? [])
   const openTasks = allGoals.flatMap(g => (g.tasks ?? []).filter(t => !t.is_completed))
 
@@ -84,16 +80,15 @@ export default async function DashboardPage() {
       endDate: g.end_date,
       tasks: (g.tasks ?? [])
         .filter(t => !t.is_completed)
-        .map(t => ({ ...t, duration_min: t.duration_min ?? 0 }))
         .sort((a, b) => a.priority - b.priority),
     }))
     .filter(g => g.tasks.length > 0)
     .sort((a, b) => new Date(a.endDate).getTime() - new Date(b.endDate).getTime())
 
-  const initialData: DashboardData = {
-    sectors: (sectorsRaw ?? []) as unknown as DashboardData['sectors'],
-    upcoming: (upcomingRaw ?? []) as unknown as DashboardData['upcoming'],
-    weekItems: (weekItems ?? []).map(i => ({ id: i.id, task_id: (i as Record<string, unknown>).task_id as string ?? null, status: i.status })),
+  return Response.json({
+    sectors: sectorsRaw ?? [],
+    upcoming: upcomingRaw ?? [],
+    weekItems: (weekItems ?? []).map(i => ({ id: i.id, task_id: (i as Record<string, unknown>).task_id ?? null, status: i.status })),
     missedCount: missedCount ?? 0,
     weekDone,
     weekTotal,
@@ -102,28 +97,5 @@ export default async function DashboardPage() {
     totalPlannedMin: openTasks.reduce((sum, t) => sum + (t.duration_min ?? 0), 0),
     domainEffort,
     backlog,
-  }
-
-  return (
-    <div className="space-y-6 max-w-7xl">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold">Household Workspace</h1>
-          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-            One place to see your domains, goals, practical tasks, constraints, and the next scheduled work.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button asChild>
-            <Link href="/sectors"><Plus className="h-4 w-4 mr-2" />Domains</Link>
-          </Button>
-          <Button variant="outline" asChild>
-            <Link href="/schedule">Open Schedule</Link>
-          </Button>
-        </div>
-      </div>
-
-      <LiveDashboard initialData={initialData} />
-    </div>
-  )
+  })
 }

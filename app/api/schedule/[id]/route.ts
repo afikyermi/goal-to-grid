@@ -1,6 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { deleteGoogleEvent, updateGoogleEvent } from '@/lib/google/calendar'
 import { recordBehaviorEvent } from '@/lib/behavior/events'
 import { scheduleItemBelongsToUser } from '@/lib/server/workspace'
 import { NextRequest } from 'next/server'
@@ -74,18 +73,6 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     },
   })
 
-  if (data.google_event_id && (scheduled_start || scheduled_end)) {
-    try {
-      await updateGoogleEvent(data.scheduled_by ?? user.id, data.google_event_id, data)
-    } catch (err) {
-      return Response.json({
-        ...data,
-        warning: outsideGoalWindow ? 'This task is outside its goal date range.' : null,
-        google_sync_warning: err instanceof Error ? err.message : 'Google update failed',
-      })
-    }
-  }
-
   return Response.json({
     ...data,
     warning: outsideGoalWindow ? 'This task is outside its goal date range.' : null,
@@ -104,17 +91,9 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
   const admin = createAdminClient()
   const { data: existing } = await admin
     .from('schedule_items')
-    .select('id, task_id, google_event_id, scheduled_by, scheduled_start, scheduled_end, tasks(goal_id)')
+    .select('id, task_id, scheduled_start, scheduled_end, tasks(goal_id)')
     .eq('id', id)
     .single()
-
-  if (existing?.google_event_id) {
-    try {
-      await deleteGoogleEvent(existing.scheduled_by ?? user.id, existing.google_event_id)
-    } catch {
-      // Keep local delete available even if Google already removed the event.
-    }
-  }
 
   const { error } = await admin.from('schedule_items').delete().eq('id', id)
   if (error) return Response.json({ error: error.message }, { status: 500 })

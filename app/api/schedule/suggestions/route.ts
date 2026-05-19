@@ -67,6 +67,7 @@ export async function POST(request: NextRequest) {
     user_id: c.user_id,
     label: '',
     day_of_week: c.day_of_week,
+    recurrence_days: null,
     start_time: c.start_time,
     end_time: c.end_time,
     created_at: '',

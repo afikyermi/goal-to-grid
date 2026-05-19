@@ -1,9 +1,9 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { CheckCircle2, ChevronDown, ChevronRight, Circle, Clock } from 'lucide-react'
-import { formatDuration } from '@/lib/utils'
+import { cn, formatDuration } from '@/lib/utils'
 
 type BoardTask = { id: string; name: string; duration_min: number; priority: number; is_completed: boolean }
 type BoardGoal = { id: string; name: string; start_date: string; end_date: string; priority: number; tasks: BoardTask[] | null }
@@ -20,31 +20,29 @@ function goalDateWindow(goal: BoardGoal): string {
   return `${formatShortDate(goal.start_date)} - ${formatShortDate(goal.end_date)}`
 }
 
-function GoalCard({ goal }: { goal: BoardGoal }) {
-  const [tasks, setTasks] = useState<BoardTask[]>(goal.tasks ?? [])
-  const [expanded, setExpanded] = useState(true)
+function GoalCard({
+  goal,
+  isActive,
+  onToggle,
+}: {
+  goal: BoardGoal
+  isActive?: boolean | null
+  onToggle: (taskId: string, completed: boolean) => void
+}) {
+  const [expanded, setExpanded] = useState(isActive !== false)
 
+  const tasks = goal.tasks ?? []
   const completedCount = tasks.filter(t => t.is_completed).length
   const totalCount = tasks.length
   const progress = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0
   const allDone = totalCount > 0 && completedCount === totalCount
 
-  const toggleTask = useCallback(async (taskId: string, current: boolean) => {
-    setTasks(prev => prev.map(t => t.id === taskId ? { ...t, is_completed: !current } : t))
-    try {
-      const res = await fetch(`/api/tasks/${taskId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ is_completed: !current }),
-      })
-      if (!res.ok) throw new Error('failed')
-    } catch {
-      setTasks(prev => prev.map(t => t.id === taskId ? { ...t, is_completed: current } : t))
-    }
-  }, [])
-
   return (
-    <div className={`rounded-md border transition-colors ${allDone ? 'border-primary/30 bg-primary/5' : 'bg-muted/20'}`}>
+    <div className={cn(
+      'rounded-md border transition-colors',
+      allDone ? 'border-primary/30 bg-primary/5' : 'bg-muted/20',
+      isActive === true && 'ring-2 ring-primary ring-offset-1',
+    )}>
       <button
         type="button"
         className="w-full p-3 text-left"
@@ -90,7 +88,7 @@ function GoalCard({ goal }: { goal: BoardGoal }) {
                   ? 'border-muted bg-muted/30 text-muted-foreground'
                   : 'bg-background hover:bg-muted/30'
               }`}
-              onClick={() => toggleTask(task.id, task.is_completed)}
+              onClick={() => onToggle(task.id, !task.is_completed)}
             >
               {task.is_completed
                 ? <CheckCircle2 className="h-4 w-4 shrink-0 text-primary" />
@@ -107,7 +105,15 @@ function GoalCard({ goal }: { goal: BoardGoal }) {
   )
 }
 
-export default function DomainBoard({ sectors }: { sectors: BoardSector[] }) {
+export default function DomainBoard({
+  sectors,
+  activeGoalId,
+  onToggle,
+}: {
+  sectors: BoardSector[]
+  activeGoalId?: string | null
+  onToggle: (taskId: string, completed: boolean) => void
+}) {
   return (
     <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
       {sectors.map(sector => {
@@ -125,7 +131,14 @@ export default function DomainBoard({ sectors }: { sectors: BoardSector[] }) {
               {goals.length === 0 ? (
                 <div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">No goals yet.</div>
               ) : (
-                goals.map(goal => <GoalCard key={goal.id} goal={goal} />)
+                goals.map(goal => (
+                  <GoalCard
+                    key={goal.id}
+                    goal={goal}
+                    isActive={activeGoalId ? (goal.id === activeGoalId ? true : false) : null}
+                    onToggle={onToggle}
+                  />
+                ))
               )}
             </div>
           </div>

@@ -5,9 +5,12 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'crypt
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 const GOOGLE_CALENDAR_API = 'https://www.googleapis.com/calendar/v3'
-// calendar.events: read/write calendar events only (not full calendar management).
-// Less scary for users than the full 'calendar' scope, still sufficient for our use case.
-const CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events'
+// calendar.events: read/write events. calendar.readonly: required for calendarList.list
+// (secondary/subscribed calendars). Both are needed for multi-calendar import.
+const CALENDAR_SCOPE = [
+  'https://www.googleapis.com/auth/calendar.events',
+  'https://www.googleapis.com/auth/calendar.readonly',
+].join(' ')
 const TOKEN_ENVELOPE_PREFIX = 'enc:v1'
 
 type TokenResponse = {
@@ -289,14 +292,49 @@ export async function deleteGoogleEvent(userId: string, googleEventId: string) {
   })
 }
 
+type CalendarListEntry = { id: string; accessRole: string; selected?: boolean; backgroundColor?: string }
+
+const FALLBACK_CALENDARS: CalendarListEntry[] = [
+  { id: 'primary', accessRole: 'owner', selected: true },
+]
+
 export async function listGoogleEvents(userId: string, timeMin: string, timeMax: string) {
-  return googleRequest<{ items?: Array<Record<string, unknown>> }>(
-    userId,
-    `/calendars/primary/events?${new URLSearchParams({
-      timeMin,
-      timeMax,
-      singleEvents: 'true',
-      orderBy: 'startTime',
-    }).toString()}`
+  let readable: CalendarListEntry[]
+  try {
+    const calendarList = await googleRequest<{ items?: CalendarListEntry[] }>(
+      userId,
+      '/users/me/calendarList'
+    )
+    readable = (calendarList.items ?? []).filter(
+      cal => Boolean(cal.id) && cal.accessRole !== 'freeBusyReader' && cal.selected !== false
+    )
+    if (readable.length === 0) readable = FALLBACK_CALENDARS
+  } catch {
+    readable = FALLBACK_CALENDARS
+  }
+
+  const params = new URLSearchParams({
+    timeMin,
+    timeMax,
+    singleEvents: 'true',
+    orderBy: 'startTime',
+    showHiddenInvitations: 'true',
+  })
+
+  const eventArrays = await Promise.all(
+    readable.map(cal =>
+      googleRequest<{ items?: Array<Record<string, unknown>> }>(
+        userId,
+        `/calendars/${encodeURIComponent(cal.id)}/events?${params.toString()}`
+      )
+        .then(r => (r.items ?? []).map(ev => ({ ...ev, _calBgColor: cal.backgroundColor ?? null })))
+        .catch(() => [])
+    )
   )
+
+  const seen = new Map<string, Record<string, unknown>>()
+  for (const event of eventArrays.flat()) {
+    if (event && typeof event.id === 'string') seen.set(event.id, event)
+  }
+  return { items: Array.from(seen.values()) }
 }
