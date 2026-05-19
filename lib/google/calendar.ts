@@ -327,7 +327,7 @@ export async function listGoogleEvents(userId: string, timeMin: string, timeMax:
         userId,
         `/calendars/${encodeURIComponent(cal.id)}/events?${params.toString()}`
       )
-        .then(r => (r.items ?? []).map(ev => ({ ...ev, _calBgColor: cal.backgroundColor ?? null })))
+        .then(r => (r.items ?? []).map(ev => ({ ...ev, _calBgColor: cal.backgroundColor ?? null } as Record<string, unknown>)))
         .catch(() => [])
     )
   )
