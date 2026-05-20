@@ -26,7 +26,11 @@ export default function RunSchedulerButton() {
 
   return (
     <div className="flex flex-col gap-1">
-      <Button onClick={handleRun} disabled={status === 'running'}>
+      <Button
+        variant="outline"
+        className="border-primary text-primary hover:bg-primary hover:text-primary-foreground transition-colors"
+        onClick={handleRun}
+        disabled={status === 'running'}>
         <Zap className="h-4 w-4 mr-2" />
         {status === 'running' ? 'Rescheduling…' : 'Self-heal missed tasks'}
       </Button>

@@ -17,7 +17,7 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { AlertTriangle, CalendarSync, CheckCircle2, ChevronLeft, ChevronRight, Pencil, Trash2, Zap, Plus } from 'lucide-react'
+import { AlertTriangle, CalendarPlus, CalendarSync, CheckCircle2, ChevronLeft, ChevronRight, GripVertical, Pencil, Trash2, Zap, Plus } from 'lucide-react'
 import type { ExternalCalendarEvent, ScheduleItemWithTask, Task, TaskWithGoal, UserConstraint } from '@/lib/types'
 import { cn, formatDuration } from '@/lib/utils'
 
@@ -33,16 +33,35 @@ type SuggestedSlot = {
   suggestions: Array<{ scheduled_start: string; scheduled_end: string }>
 }
 
-const STATUS_COLORS: Record<string, string> = {
-  Pending: 'bg-blue-100 border-blue-400 text-blue-900',
-  Done: 'bg-green-100 border-green-400 text-green-900',
-  Missed: 'bg-red-100 border-red-400 text-red-900',
+const STATUS_COLORS: Record<string, { normal: string; long: string }> = {
+  Pending: {
+    normal: 'bg-[oklch(0.88_0.075_255)] border-[oklch(0.58_0.15_255)] text-[oklch(0.25_0.12_255)]',
+    long: 'bg-[oklch(0.88_0.075_255)] border-[oklch(0.58_0.15_255)] text-[oklch(0.25_0.12_255)] opacity-55',
+  },
+  Done: {
+    normal: 'bg-[oklch(0.88_0.075_145)] border-[oklch(0.52_0.13_145)] text-[oklch(0.25_0.10_145)]',
+    long: 'bg-[oklch(0.88_0.075_145)] border-[oklch(0.52_0.13_145)] text-[oklch(0.25_0.10_145)] opacity-55',
+  },
+  Missed: {
+    normal: 'bg-[oklch(0.91_0.06_27)] border-destructive/55 text-destructive',
+    long: 'bg-[oklch(0.91_0.06_27)] border-destructive/55 text-destructive opacity-55',
+  },
 }
 
 const STATUS_BADGE: Record<string, 'default' | 'secondary' | 'destructive'> = {
   Pending: 'default',
   Done: 'secondary',
   Missed: 'destructive',
+}
+
+const PRIORITY_LABELS: Record<number, string> = {
+  1: 'High',
+  2: 'Medium',
+  3: 'Low',
+}
+
+function siteStatusClass(status: string, isLong = false): string {
+  return STATUS_COLORS[status]?.[isLong ? 'long' : 'normal'] ?? STATUS_COLORS.Pending.normal
 }
 
 const DAY_START_HOUR = 0
@@ -159,6 +178,20 @@ function isTransparent(entry: CalendarEntry): boolean {
 function externalDisplayColor(entry: CalendarEntry): string | null {
   if (entry.kind !== 'external') return null
   return entry.item.metadata?.google_meta?.display_color ?? null
+}
+
+function entryDurationMinutes(entry: CalendarEntry): number {
+  return Math.round((entryEnd(entry).getTime() - entryStart(entry).getTime()) / 60000)
+}
+
+function eventColorStyle(color: string | null, isLong: boolean): React.CSSProperties {
+  const base = color ?? '#1a73e8'
+  return {
+    backgroundColor: base,
+    borderColor: base,
+    color: '#ffffff',
+    opacity: isLong ? 0.55 : 1,
+  }
 }
 
 // Assigns side-by-side columns to overlapping entries (Google Calendar style).
@@ -288,25 +321,25 @@ function DroppableDayColumn({
   constraintBlocks: Array<{ top: number; height: number; label: string }>
 }) {
   const id = `day-col-${toDateInput(day)}`
-  const { setNodeRef, isOver } = useDroppable({ id })
+  const { setNodeRef } = useDroppable({ id })
   const dateStr = toDateInput(day)
   return (
     <div
       ref={setNodeRef}
       id={id}
       data-calendar-day={dateStr}
-      className={cn('relative border-r last:border-r-0 cursor-crosshair transition-colors', isOver && 'bg-primary/5')}
+      className="relative border-r border-border/70 bg-card last:border-r-0 cursor-crosshair transition-colors"
       onClick={e => onColumnClick(day, e)}
     >
       {/* Constraint zones — blocked time shown as amber background with label */}
       {constraintBlocks.map((block, i) => (
         <div
           key={i}
-          className="absolute left-0 right-0 bg-amber-100/50 dark:bg-amber-900/25 border-t border-b border-amber-200/60 dark:border-amber-700/40 pointer-events-none z-0 overflow-hidden"
+          className="absolute left-0 right-0 border-t border-b bg-[var(--constraint-fill)] border-[var(--constraint-border)] pointer-events-none z-0 overflow-hidden"
           style={{ top: `${block.top}px`, height: `${block.height}px` }}
         >
           {block.height >= 20 && (
-            <span className="absolute left-1.5 top-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300 truncate max-w-full pr-1">
+            <span className="absolute left-1.5 top-0.5 text-[10px] font-medium text-[oklch(0.42_0.11_70)] truncate max-w-full pr-1">
               {block.label}
             </span>
           )}
@@ -315,7 +348,7 @@ function DroppableDayColumn({
       {children}
       {snapPreview?.date === dateStr && (
         <div
-          className="absolute left-1 right-1 rounded-md border-2 border-primary/70 bg-primary/15 pointer-events-none z-10 px-2 py-1 text-xs font-medium text-primary shadow-sm"
+          className="absolute left-1 right-1 rounded-md border-2 border-primary/60 bg-[var(--status-active-bg)] pointer-events-none z-10 px-2 py-1 text-xs font-medium text-primary shadow-sm"
           style={{ top: `${snapPreview.top}px`, height: `${snapPreview.height}px` }}
         >
           {snapPreview.startTime}
@@ -333,17 +366,35 @@ function DraggableTaskCard({ task, onPlace }: { task: Task; onPlace: () => void 
   return (
     <div
       ref={setNodeRef}
-      className={cn('rounded-md border p-2 touch-none select-none', isDragging && 'opacity-40')}
+      className={cn(
+        'group relative overflow-hidden rounded-lg border-2 border-primary/25 bg-gradient-to-br from-card to-[var(--status-active-bg)]/35 p-3 touch-none select-none shadow-sm transition-all cursor-grab active:cursor-grabbing hover:-translate-y-0.5 hover:border-primary/55 hover:shadow-md',
+        isDragging && 'opacity-40'
+      )}
       {...attributes}
       {...listeners}
     >
-      <p className="text-sm font-medium">{task.name}</p>
-      <p className="text-xs text-muted-foreground">{formatDuration(task.duration_min)}</p>
+      <div className="absolute left-0 top-0 h-full w-1 bg-primary/70" />
+      <div className="flex items-start gap-2">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border bg-background/75 text-primary shadow-sm transition-colors group-hover:bg-primary group-hover:text-primary-foreground">
+          <GripVertical className="h-4 w-4" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center justify-between gap-2">
+            <p className="truncate text-sm font-semibold">{task.name}</p>
+            <span className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-primary">Drag</span>
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+            <Badge variant="secondary" className="rounded-md">{formatDuration(task.duration_min)}</Badge>
+            <Badge variant="outline" className="rounded-md">{PRIORITY_LABELS[task.priority] ?? 'Priority'}</Badge>
+          </div>
+        </div>
+      </div>
       <Button
-        variant="outline" size="sm" className="mt-2 w-full"
+        variant="outline" size="sm" className="mt-3 w-full justify-center bg-muted/45 hover:bg-[var(--status-active-bg)]"
         onPointerDown={e => e.stopPropagation()}
         onClick={e => { e.stopPropagation(); onPlace() }}
       >
+        <CalendarPlus className="mr-2 h-4 w-4" />
         Place in calendar
       </Button>
     </div>
@@ -365,31 +416,45 @@ function DraggableMissedCard({
     id: `missed-${item.id}`,
     data: { type: 'missed', item },
   })
+  const duration = Math.round(
+    (new Date(item.scheduled_end).getTime() - new Date(item.scheduled_start).getTime()) / 60000
+  )
   return (
     <div
       ref={setNodeRef}
       {...attributes}
       {...listeners}
       className={cn(
-        'flex items-center gap-2 rounded border bg-background px-2 py-2 text-xs touch-none select-none',
+        'group relative overflow-hidden rounded-lg border-2 border-destructive/25 bg-gradient-to-br from-card to-destructive/10 p-3 text-xs touch-none select-none shadow-sm transition-all cursor-grab active:cursor-grabbing hover:-translate-y-0.5 hover:border-destructive/50 hover:shadow-md',
         isDragging && 'opacity-40'
       )}
     >
-      <div className="min-w-0 flex-1">
-        <p className="truncate font-medium">{taskName}</p>
-        <p className="text-muted-foreground">Was: {wasDate}</p>
+      <div className="absolute left-0 top-0 h-full w-1 bg-destructive/70" />
+      <div className="flex items-start gap-2">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border bg-background/75 text-destructive shadow-sm transition-colors group-hover:bg-destructive group-hover:text-destructive-foreground">
+          <GripVertical className="h-4 w-4" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center justify-between gap-2">
+            <p className="truncate text-sm font-semibold">{taskName}</p>
+            <span className="shrink-0 rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-destructive">Drag</span>
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+            <Badge variant="secondary" className="rounded-md">{formatDuration(duration)}</Badge>
+            <Badge variant="outline" className="rounded-md">Was {wasDate}</Badge>
+          </div>
+        </div>
       </div>
-      <div className="flex shrink-0 gap-1" onPointerDown={e => e.stopPropagation()}>
-        <Button size="sm" variant="ghost" className="h-6 w-6 p-0" title="Mark completed"
-          onClick={onComplete}>
-          <CheckCircle2 className="h-3.5 w-3.5 text-primary" />
-        </Button>
+      <div className="mt-3 flex gap-2" onPointerDown={e => e.stopPropagation()}>
         {task && (
-          <Button size="sm" variant="outline" className="h-6 px-2 text-xs" onClick={onReschedule}>
+          <Button size="sm" variant="outline" className="h-8 flex-1 bg-muted/45 hover:bg-destructive/10" onClick={onReschedule}>
             Reschedule
           </Button>
         )}
-        <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={onDismiss}>
+        <Button size="sm" variant="ghost" className="h-8 px-3" title="Mark completed" onClick={onComplete}>
+          <CheckCircle2 className="h-3.5 w-3.5 text-primary" />
+        </Button>
+        <Button size="sm" variant="ghost" className="h-8 px-3" onClick={onDismiss}>
           Dismiss
         </Button>
       </div>
@@ -404,7 +469,7 @@ function UnscheduledDropZone({ children }: { children: React.ReactNode }) {
     <div
       ref={setNodeRef}
       data-unscheduled-dropzone="true"
-      className={cn('rounded-lg border p-3 transition-colors', isOver && 'border-primary bg-primary/5 ring-1 ring-primary/30')}
+      className={cn('rounded-xl border bg-card p-4 shadow-sm transition-colors', isOver && 'border-primary bg-[var(--status-active-bg)] ring-1 ring-primary/25')}
     >
       {children}
     </div>
@@ -1190,7 +1255,7 @@ export default function SchedulePage() {
 
         {/* Google Calendar status */}
         {calendarStatus && (
-          <div className="rounded-lg border bg-background px-4 py-3">
+          <div className="rounded-lg border bg-card px-4 py-3 shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <p className="text-sm font-semibold">
@@ -1283,21 +1348,21 @@ export default function SchedulePage() {
           </div>
         )}
         {syncMsg && (
-          <div className="rounded-lg border px-4 py-3">
+          <div className="rounded-lg border bg-card px-4 py-3 shadow-sm">
             <p className="text-sm text-muted-foreground">{syncMsg}</p>
           </div>
         )}
 
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
           {viewMode === 'week' ? (
-            <div className="overflow-hidden rounded-lg border bg-background">
+            <div className="overflow-hidden rounded-lg border bg-card shadow-sm">
               {/* Day header row */}
-              <div className="grid grid-cols-[64px_repeat(7,minmax(120px,1fr))] border-b">
-                <div className="sticky left-0 z-30 border-r bg-muted/30" />
+              <div className="grid grid-cols-[64px_repeat(7,minmax(120px,1fr))] border-b bg-muted/35">
+                <div className="sticky left-0 z-30 border-r bg-muted/60" />
                 {days.map(day => {
                   const isToday = new Date().toDateString() === day.toDateString()
                   return (
-                    <div key={day.toISOString()} className={`border-r px-3 py-2 text-center last:border-r-0 ${isToday ? 'bg-primary/5' : ''}`}>
+                    <div key={day.toISOString()} className={`border-r px-3 py-2 text-center last:border-r-0 ${isToday ? 'bg-[var(--status-active-bg)]' : ''}`}>
                       <div className="text-xs font-medium text-muted-foreground">{WEEKDAYS[day.getDay()]}</div>
                       <div className={`mx-auto mt-1 flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold ${isToday ? 'bg-primary text-primary-foreground' : ''}`}>
                         {day.getDate()}
@@ -1310,11 +1375,11 @@ export default function SchedulePage() {
               {/* All-day event row */}
               {hasAnyAllDay && (
                 <div className="grid grid-cols-[64px_repeat(7,minmax(120px,1fr))] border-b">
-                  <div className="border-r px-1 py-1 text-right text-[10px] text-muted-foreground pt-2">all‑day</div>
+                  <div className="border-r bg-muted/35 px-1 py-1 text-right text-[10px] text-muted-foreground pt-2">all‑day</div>
                   {days.map(day => {
                     const adEntries = entriesForDay(day).filter(isAllDay)
                     return (
-                      <div key={day.toISOString()} className="border-r p-1 min-h-[28px] last:border-r-0 space-y-0.5">
+                      <div key={day.toISOString()} className="border-r bg-card p-1 min-h-[28px] last:border-r-0 space-y-0.5">
                         {adEntries.map(entry => {
                           const color = externalDisplayColor(entry)
                           return (
@@ -1341,9 +1406,9 @@ export default function SchedulePage() {
                   style={{ height: `${(DAY_END_HOUR - DAY_START_HOUR) * HOUR_HEIGHT}px` }}
                 >
                   {/* Hour labels */}
-                  <div className="sticky left-0 z-20 relative border-r bg-background">
+                  <div className="sticky left-0 z-20 relative border-r bg-muted/35">
                     {hourMarks.map(hour => (
-                      <div key={hour} className="absolute left-0 right-0 border-t bg-background px-2 text-right text-[11px] text-muted-foreground"
+                      <div key={hour} className="absolute left-0 right-0 border-t bg-muted/35 px-2 text-right text-[11px] text-muted-foreground"
                         style={{ top: `${(hour - DAY_START_HOUR) * HOUR_HEIGHT - (hour === DAY_END_HOUR ? 16 : 0)}px` }}>
                         {hour === 24 ? '24' : pad2(hour)}:00
                       </div>
@@ -1373,11 +1438,11 @@ export default function SchedulePage() {
                         {hours.map(hour => (
                           <div
                             key={hour}
-                            className="absolute left-0 right-0 border-t border-muted/70 bg-transparent hover:bg-muted/20"
+                            className="absolute left-0 right-0 border-t border-border/70 bg-transparent hover:bg-accent/35"
                             style={{ top: `${(hour - DAY_START_HOUR) * HOUR_HEIGHT}px`, height: `${HOUR_HEIGHT}px` }}
                           />
                         ))}
-                        <div className="absolute left-0 right-0 border-t border-muted/70" style={{ top: `${DAY_WINDOW_MINUTES / 60 * HOUR_HEIGHT}px` }} />
+                        <div className="absolute left-0 right-0 border-t border-border/70" style={{ top: `${DAY_WINDOW_MINUTES / 60 * HOUR_HEIGHT}px` }} />
 
                         {/* Current time indicator */}
                         {showNowLine && (
@@ -1397,24 +1462,20 @@ export default function SchedulePage() {
                           const leftPct  = col * colW
                           const widthPct = colW
                           const color = externalDisplayColor(entry)
+                          const isLongEvent = entryDurationMinutes(entry) > 300
                           const colorClass = entry.kind !== 'external'
-                            ? STATUS_COLORS[entry.item.status]
-                            : isTransparent(entry)
-                              ? 'z-0 border-dashed opacity-70 pointer-events-none'
-                              : color
-                                ? ''
-                                : 'bg-blue-50 border-blue-300 text-blue-800 dark:bg-blue-950 dark:border-blue-700 dark:text-blue-200'
+                            ? siteStatusClass(entry.item.status, isLongEvent)
+                            : ''
                           const extraStyle: React.CSSProperties = (() => {
-                            if (entry.kind !== 'external' || !color) return {}
-                            if (isTransparent(entry)) return { borderColor: color }
-                            return { backgroundColor: `${color}22`, borderColor: color, color }
+                            if (entry.kind !== 'external') return {}
+                            return eventColorStyle(color, isLongEvent)
                           })()
                           return (
                             <DraggableEventBlock
                               key={`${entry.kind}-${entry.kind === 'site' ? entry.item.id : entry.item.google_event_id}`}
                               entry={entry}
                               onClick={() => setSelected(entry)}
-                              className={cn(colorClass, !isTransparent(entry) && 'hover:z-10')}
+                              className={cn(colorClass, 'hover:z-10')}
                               style={{
                                 top: `${position.top}px`,
                                 height: `${position.height}px`,
@@ -1432,7 +1493,7 @@ export default function SchedulePage() {
               </div>
             </div>
           ) : (
-            <div className="rounded-lg border bg-background">
+            <div className="rounded-lg border bg-card shadow-sm">
               <div className="border-b px-4 py-3">
                 <h2 className="font-semibold">Agenda</h2>
                 <p className="text-sm text-muted-foreground">Chronological list for {weekLabel}</p>
@@ -1465,13 +1526,18 @@ export default function SchedulePage() {
 
           <aside className="space-y-3">
             <UnscheduledDropZone>
-              <h2 className="font-semibold">Unscheduled Tasks</h2>
-              <p className="mt-1 text-xs text-muted-foreground">Drag tasks onto the calendar. Drag scheduled items back here to unschedule them.</p>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h2 className="font-semibold">Unscheduled Tasks</h2>
+                  <p className="mt-1 text-xs text-muted-foreground">Drag a task into the calendar or place it manually.</p>
+                </div>
+                <Badge variant="secondary" className="rounded-md">{unscheduledTasks.length}</Badge>
+              </div>
               <div className="mt-3 max-h-[420px] space-y-2 overflow-auto">
                 {allTasks.length === 0 ? (
-                  <p className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">No tasks yet. Create goals and tasks in Plan first.</p>
+                  <p className="rounded-lg border border-dashed bg-muted/25 p-3 text-sm text-muted-foreground">No tasks yet. Create goals and tasks in Plan first.</p>
                 ) : unscheduledTasks.length === 0 ? (
-                  <p className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">All tasks are scheduled. Drop a calendar item here to unschedule it.</p>
+                  <p className="rounded-lg border border-dashed bg-muted/25 p-3 text-sm text-muted-foreground">All tasks are scheduled. Drop a calendar item here to unschedule it.</p>
                 ) : (
                   unscheduledTasks.map(task => (
                     <DraggableTaskCard key={task.id} task={task} onPlace={() => openManual(task)} />
@@ -1481,14 +1547,16 @@ export default function SchedulePage() {
             </UnscheduledDropZone>
 
             {missedItems.length > 0 && (
-              <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3">
-                <h2 className="flex items-center gap-2 text-sm font-semibold text-destructive">
-                  <AlertTriangle className="h-4 w-4" />
-                  Missed / Overdue ({missedItems.length})
-                </h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  These tasks passed their scheduled window. Drag onto the calendar or use Reschedule.
-                </p>
+              <div className="rounded-xl border border-destructive/25 bg-card p-4 shadow-sm">
+                <div className="rounded-lg bg-destructive/10 p-3">
+                  <h2 className="flex items-center gap-2 text-sm font-semibold text-destructive">
+                    <AlertTriangle className="h-4 w-4" />
+                    Missed / Overdue ({missedItems.length})
+                  </h2>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Move these back into the week or dismiss them.
+                  </p>
+                </div>
                 <div className="mt-3 max-h-[280px] space-y-2 overflow-auto">
                   {missedItems.map(item => {
                     const taskName = (item.tasks as unknown as { name: string } | null)?.name ?? 'Task'
@@ -1513,7 +1581,7 @@ export default function SchedulePage() {
               </div>
             )}
 
-            <div className="rounded-lg border p-3 text-xs text-muted-foreground space-y-1">
+              <div className="rounded-lg border bg-card p-3 text-xs text-muted-foreground shadow-sm space-y-1">
               <p><span className="font-semibold text-foreground">Drag tasks</span> from the list above onto any 15-minute slot.</p>
               <p><span className="font-semibold text-foreground">Drag events</span> within the calendar to move them, or back to Unscheduled Tasks to remove them from the calendar.</p>
               <p><span className="font-semibold text-foreground">Click any empty slot</span> in the calendar to open the manual scheduling dialog.</p>
@@ -1733,20 +1801,23 @@ export default function SchedulePage() {
       {/* Drag overlay — shown while dragging */}
       <DragOverlay>
         {activeDragTask && (
-          <div className="rounded-md border bg-background p-2 shadow-lg text-sm opacity-90 w-40 pointer-events-none">
+          <div className="rounded-lg border bg-card p-3 shadow-lg text-sm opacity-95 w-44 pointer-events-none">
             <p className="font-medium truncate">{activeDragTask.name}</p>
             <p className="text-xs text-muted-foreground">{formatDuration(activeDragTask.duration_min)}</p>
           </div>
         )}
         {activeDragItem && (
-          <div className={cn('rounded-md border px-2 py-1 text-xs shadow-lg opacity-90 w-32 pointer-events-none', STATUS_COLORS[activeDragItem.status])}>
-            <p className="font-medium truncate">{(activeDragItem.tasks as unknown as { name: string }).name}</p>
-            <p className="opacity-70">
-              {formatDuration(Math.round(
-                (new Date(activeDragItem.scheduled_end).getTime() - new Date(activeDragItem.scheduled_start).getTime()) / 60000
-              ))}
-            </p>
-          </div>
+          (() => {
+            const duration = Math.round(
+              (new Date(activeDragItem.scheduled_end).getTime() - new Date(activeDragItem.scheduled_start).getTime()) / 60000
+            )
+            return (
+              <div className={cn('rounded-lg border px-2 py-1 text-xs shadow-lg opacity-95 w-36 pointer-events-none', siteStatusClass(activeDragItem.status, duration > 300))}>
+                <p className="font-medium truncate">{(activeDragItem.tasks as unknown as { name: string }).name}</p>
+                <p className="opacity-70">{formatDuration(duration)}</p>
+              </div>
+            )
+          })()
         )}
       </DragOverlay>
     </DndContext>

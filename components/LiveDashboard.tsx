@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import RunSchedulerButton from '@/components/RunSchedulerButton'
 import DomainBoard from '@/components/DomainBoard'
-import { formatDuration } from '@/lib/utils'
+import { cn, formatDuration } from '@/lib/utils'
 import { useActiveGoal } from '@/lib/contexts/active-goal-context'
 
 type DashboardTask = { id: string; name: string; duration_min: number; priority: number; is_completed: boolean }
@@ -48,17 +48,19 @@ function RadialProgress({ value }: { value: number | null }) {
   const pct = value ?? 0
   const r = 28
   const circ = 2 * Math.PI * r
-  const dash = (pct / 100) * circ
+  const dash = value !== null ? (pct / 100) * circ : 0
   return (
     <div className="relative flex items-center justify-center">
       <svg width="72" height="72" className="-rotate-90">
         <circle cx="36" cy="36" r={r} fill="none" stroke="currentColor" strokeWidth="6"
           className="text-muted/30" />
-        <circle cx="36" cy="36" r={r} fill="none" stroke="currentColor" strokeWidth="6"
-          strokeDasharray={`${dash} ${circ}`} strokeLinecap="round"
-          className="text-primary transition-all duration-700" />
+        {value !== null && (
+          <circle cx="36" cy="36" r={r} fill="none" stroke="currentColor" strokeWidth="6"
+            strokeDasharray={`${dash} ${circ}`} strokeLinecap="round"
+            className={`transition-all duration-700 ${value === 100 ? 'text-[var(--status-done)]' : 'text-primary'}`} />
+        )}
       </svg>
-      <span className="absolute text-lg font-bold">
+      <span className={`absolute text-lg font-bold font-mono ${value === null ? 'text-muted-foreground' : ''}`}>
         {value === null ? '—' : `${pct}%`}
       </span>
     </div>
@@ -126,7 +128,7 @@ export function LiveDashboard({ initialData }: { initialData: DashboardData }) {
     }
   }, [data])
 
-  // ── Locally-derived KPIs ─────────────────────────────────────────────────
+  // ── Locally-derived KPIs ────────────────────────────────────────────────
   const allGoals = data.sectors.flatMap(s => s.goals ?? [])
   const openTasks = allGoals.flatMap(g => (g.tasks ?? []).filter(t => !t.is_completed))
   const openBacklogCount = openTasks.length
@@ -166,62 +168,70 @@ export function LiveDashboard({ initialData }: { initialData: DashboardData }) {
 
   return (
     <>
-      {/* ── KPI Strip ─────────────────────────────────────────────────────────── */}
+      {/* ── KPI Strip ────────────────────────────────────────────────────────── */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <Card>
+        <Card className={cn(
+          'ao-mount border-[oklch(0.50_0.20_264/0.15)]',
+          completionRate === 100 ? 'bg-[var(--status-done-bg)]' : 'bg-gradient-to-b from-card to-muted/20'
+        )}>
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-              <BarChart2 className="h-4 w-4" />Weekly Completion
+              <BarChart2 className="h-4 w-4 text-primary" />Weekly Completion
             </CardTitle>
           </CardHeader>
           <CardContent className="flex items-center gap-4">
             <RadialProgress value={completionRate} />
             <div>
-              <p className="text-2xl font-bold">
-                {weekDone}<span className="text-sm font-normal text-muted-foreground">/{weekTotal}</span>
+              <p className="text-2xl font-bold font-mono">
+                {weekDone}<span className="text-sm font-normal text-muted-foreground font-sans">/{weekTotal}</span>
               </p>
               <p className="text-xs text-muted-foreground">tasks this week</p>
             </div>
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="ao-mount bg-gradient-to-b from-card to-muted/20 border-[oklch(0.50_0.20_264/0.15)]" style={{ animationDelay: '60ms' }}>
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-              <ClipboardList className="h-4 w-4" />Open Backlog
+              <ClipboardList className="h-4 w-4 text-primary" />Open Backlog
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-3xl font-bold">{openBacklogCount}</p>
-            <p className="text-xs text-muted-foreground">tasks remaining</p>
+            <p className={`text-4xl font-bold font-mono transition-colors duration-300 ${openBacklogCount === 0 ? 'text-primary' : ''}`}>
+              {openBacklogCount}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {openBacklogCount === 0 ? 'All caught up' : 'tasks remaining'}
+            </p>
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="ao-mount bg-gradient-to-b from-card to-muted/20 border-[oklch(0.50_0.20_264/0.15)]" style={{ animationDelay: '120ms' }}>
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-              <Clock className="h-4 w-4" />Planned Effort
+              <Clock className="h-4 w-4 text-primary" />Planned Effort
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-3xl font-bold">{formatDuration(totalPlannedMin)}</p>
+            <p className="text-4xl font-bold font-mono">{formatDuration(totalPlannedMin)}</p>
             <p className="text-xs text-muted-foreground">across open tasks</p>
           </CardContent>
         </Card>
       </div>
 
-      {/* ── Sync error banner ─────────────────────────────────────────────────── */}
+      {/* ── Sync error banner ────────────────────────────────────────────────── */}
       {syncMsg && (
-        <div className="flex items-center justify-between rounded-md border border-destructive bg-destructive/10 px-4 py-2 text-sm text-destructive">
+        <div className="ao-slide-up flex items-center justify-between rounded-md border border-destructive bg-destructive/10 px-4 py-2 text-sm text-destructive">
           <span>{syncMsg}</span>
           <button type="button" className="ml-4 shrink-0 font-medium" onClick={() => setSyncMsg(null)}>Dismiss</button>
         </div>
       )}
 
-      {/* ── Active Goal selector ──────────────────────────────────────────────── */}
+      {/* ── Active Goal selector ─────────────────────────────────────────────── */}
       {allGoals.length > 0 && (
-        <div className="flex items-center gap-3 rounded-lg border bg-background px-4 py-2">
-          <span className="text-sm font-medium text-muted-foreground shrink-0">Active Goal:</span>
+        <div className="ao-mount flex items-center gap-3 rounded-lg border border-l-2 border-primary bg-[var(--page-bg)] px-4 py-2"
+             style={{ animationDelay: '180ms' }}>
+          <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider shrink-0">Active Goal:</span>
           <select
             className="flex-1 rounded-md border bg-background px-2 py-1 text-sm"
             value={activeGoalId ?? ''}
@@ -231,28 +241,29 @@ export function LiveDashboard({ initialData }: { initialData: DashboardData }) {
             {allGoals.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
           </select>
           {activeGoalId && (
-            <Button size="sm" variant="ghost" className="shrink-0" onClick={() => setActiveGoalId(null)}>
+            <Button size="sm" variant="ghost" className="shrink-0 transition-opacity duration-200"
+                    onClick={() => setActiveGoalId(null)}>
               Clear
             </Button>
           )}
         </div>
       )}
 
-      {/* ── Main two-column layout ────────────────────────────────────────────── */}
+      {/* ── Main two-column layout ───────────────────────────────────────────── */}
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_380px]">
 
         {/* Left column: Domain Board + Open Backlog */}
         <div className="space-y-4">
-          <Card>
+          <Card className="ao-mount" style={{ animationDelay: '240ms' }}>
             <CardHeader className="pb-3">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <CardTitle>Domain Board</CardTitle>
+                  <CardTitle className="text-sm font-semibold uppercase tracking-wider text-foreground">Domain Board</CardTitle>
                   <p className="mt-1 text-sm text-muted-foreground">
                     Check off tasks to track goal progress across your domains.
                   </p>
                 </div>
-                <Badge variant="outline">{sectors.length} domains</Badge>
+                <Badge variant="outline" className="font-mono tabular-nums">{sectors.length} domains</Badge>
               </div>
             </CardHeader>
             <CardContent>
@@ -269,9 +280,9 @@ export function LiveDashboard({ initialData }: { initialData: DashboardData }) {
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className="ao-mount" style={{ animationDelay: '300ms' }}>
             <CardHeader className="pb-3">
-              <CardTitle>Open Backlog</CardTitle>
+              <CardTitle className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Open Backlog</CardTitle>
               <p className="text-sm text-muted-foreground">
                 All incomplete tasks, grouped by goal — sorted by deadline, then priority.
               </p>
@@ -283,8 +294,9 @@ export function LiveDashboard({ initialData }: { initialData: DashboardData }) {
                   <p className="mt-1 text-sm text-muted-foreground">No open tasks remaining.</p>
                 </div>
               ) : (
-                backlog.map(group => (
-                  <div key={group.goalId} className="rounded-md border p-3">
+                backlog.map((group, idx) => (
+                  <div key={group.goalId} className="ao-slide-up rounded-md border p-3"
+                       style={{ animationDelay: `${360 + idx * 40}ms` }}>
                     <div className="mb-2 flex items-center justify-between gap-2">
                       <div className="min-w-0">
                         <p className="truncate font-semibold text-sm">{group.goalName}</p>
@@ -292,14 +304,14 @@ export function LiveDashboard({ initialData }: { initialData: DashboardData }) {
                       </div>
                       <div className="flex shrink-0 items-center gap-2">
                         <Badge variant={priorityVariant[group.priority]}>{priorityLabel[group.priority]}</Badge>
-                        <Badge variant="secondary">{group.tasks.length}</Badge>
+                        <Badge variant="secondary" className="font-mono tabular-nums">{group.tasks.length}</Badge>
                       </div>
                     </div>
                     <div className="space-y-1">
                       {group.tasks.map(task => (
                         <div key={task.id} className="flex items-center gap-2 rounded border bg-muted/20 px-2 py-1.5 text-xs">
                           <span className="flex-1 truncate">{task.name}</span>
-                          <span className="shrink-0 text-muted-foreground">{formatDuration(task.duration_min)}</span>
+                          <span className="shrink-0 text-muted-foreground font-mono">{formatDuration(task.duration_min)}</span>
                           <Badge variant={priorityVariant[task.priority]} className="shrink-0 text-[10px]">
                             {priorityLabel[task.priority]}
                           </Badge>
@@ -315,16 +327,24 @@ export function LiveDashboard({ initialData }: { initialData: DashboardData }) {
 
         {/* Right column (380px): Execution Health + Upcoming + Domain Effort */}
         <div className="space-y-4">
-          <Card className={missedCount > 0 ? 'border-destructive' : ''}>
+          <Card
+            className={cn(
+              'ao-mount transition-colors duration-300',
+              missedCount > 0
+                ? 'border-destructive bg-destructive/5'
+                : 'border-[var(--status-done-border)] bg-[var(--status-done-bg)]'
+            )}
+            style={{ animationDelay: '300ms' }}>
             <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2">
-                <AlertCircle className="h-5 w-5" />Execution Health
+              <CardTitle className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+                <AlertCircle className={`h-4 w-4 ${missedCount > 0 ? 'ao-breathe text-destructive' : 'text-[var(--status-done)]'}`} />
+                Execution Health
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">Missed items</span>
-                <span className={missedCount > 0 ? 'font-semibold text-destructive' : 'font-semibold'}>
+                <span className="text-xs uppercase tracking-wider text-muted-foreground">Missed items</span>
+                <span className={`font-mono tabular-nums ${missedCount > 0 ? 'font-semibold text-destructive' : 'font-semibold'}`}>
                   {missedCount}
                 </span>
               </div>
@@ -332,10 +352,10 @@ export function LiveDashboard({ initialData }: { initialData: DashboardData }) {
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className="ao-mount" style={{ animationDelay: '360ms' }}>
             <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2">
-                <CalendarDays className="h-5 w-5" />Next Scheduled Work
+              <CardTitle className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+                <CalendarDays className="h-4 w-4" />Next Scheduled Work
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
@@ -344,18 +364,19 @@ export function LiveDashboard({ initialData }: { initialData: DashboardData }) {
                   Nothing scheduled yet. Run the scheduler after creating actions.
                 </div>
               ) : (
-                upcoming.map(item => {
+                upcoming.map((item, idx) => {
                   const start = new Date(item.scheduled_start)
                   const isToday = start.toDateString() === now.toDateString()
                   const isTomorrow = start.toDateString() === tomorrow.toDateString()
                   const dayLabel = isToday ? 'Today' : isTomorrow ? 'Tomorrow' : fmtDate(item.scheduled_start)
                   return (
-                    <div key={item.id} className="rounded-md border bg-background p-3">
+                    <div key={item.id} className="ao-slide-up rounded-md border bg-background p-3"
+                         style={{ animationDelay: `${420 + idx * 30}ms` }}>
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
                           <p className="truncate text-sm font-medium">{item.tasks?.name ?? 'Untitled task'}</p>
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            {dayLabel} at {fmtTime(item.scheduled_start)}
+                          <p className="mt-1 text-xs text-muted-foreground font-mono">
+                            {dayLabel} · {fmtTime(item.scheduled_start)}
                           </p>
                         </div>
                         <Badge variant={priorityVariant[item.tasks?.priority ?? 2]}>
@@ -369,10 +390,10 @@ export function LiveDashboard({ initialData }: { initialData: DashboardData }) {
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className="ao-mount" style={{ animationDelay: '420ms' }}>
             <CardHeader className="pb-3">
-              <CardTitle>Effort by Domain</CardTitle>
-              <p className="text-sm text-muted-foreground">Time allocated to open tasks per domain.</p>
+              <CardTitle className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Effort by Domain</CardTitle>
+              <p className="text-xs uppercase tracking-wider text-muted-foreground">Time allocated to open tasks per domain.</p>
             </CardHeader>
             <CardContent className="space-y-3">
               {domainEffort.length === 0 ? (
@@ -380,18 +401,29 @@ export function LiveDashboard({ initialData }: { initialData: DashboardData }) {
                   No open tasks to display.
                 </div>
               ) : (
-                domainEffort.map(domain => {
+                domainEffort.map((domain, idx) => {
                   const pct = Math.round((domain.minutes / maxDomainMin) * 100)
+                  const isLeading = idx === 0
                   return (
-                    <div key={domain.id} className="space-y-1">
+                    <div key={domain.id} className="ao-slide-up space-y-1"
+                         style={{ animationDelay: `${480 + idx * 60}ms` }}>
                       <div className="flex items-center justify-between text-sm">
-                        <span className="font-medium truncate">{domain.name}</span>
-                        <span className="shrink-0 text-xs text-muted-foreground ml-2">{formatDuration(domain.minutes)}</span>
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="w-2 h-2 rounded-full bg-primary/70 shrink-0" />
+                          <span className="font-medium truncate">{domain.name}</span>
+                        </div>
+                        <span className="shrink-0 text-xs text-muted-foreground font-mono ml-2">
+                          {formatDuration(domain.minutes)}
+                        </span>
                       </div>
                       <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
                         <div
-                          className="h-full rounded-full bg-primary/70 transition-all duration-500"
-                          style={{ width: `${pct}%` }}
+                          className={`h-full rounded-full origin-left ${isLeading ? 'bg-primary/80' : 'bg-primary/40'}`}
+                          style={{
+                            width: `${pct}%`,
+                            animation: `ao-bar-scale 700ms cubic-bezier(0.4,0,0.2,1) ${480 + idx * 80}ms both`,
+                            boxShadow: isLeading ? '0 0 8px oklch(0.205 0 0 / 0.25)' : 'none',
+                          }}
                         />
                       </div>
                     </div>

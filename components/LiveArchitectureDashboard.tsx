@@ -91,7 +91,7 @@ export function LiveArchitectureDashboard({ initialCounts }: { initialCounts: Pa
           </div>
           <div className="rounded-md border p-3">
             <p className="font-medium">Goals own the execution window</p>
-            <p className="mt-1 text-muted-foreground">Tasks inherit the goal start and end dates.</p>
+            <p className="mt-1 text-muted-foreground">Tasks belong to a goal and are intended to be scheduled inside the goal&apos;s date window. This is product convention, not a database constraint.</p>
           </div>
           <div className="rounded-md border p-3">
             <p className="font-medium">Calendar placement is manual-first</p>

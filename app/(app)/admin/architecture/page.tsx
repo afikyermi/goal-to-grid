@@ -1,16 +1,18 @@
+import { redirect } from 'next/navigation'
 import MermaidDiagram from '@/components/MermaidDiagram'
 import { LiveArchitectureDashboard } from '@/components/LiveArchitectureDashboard'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 
 const CONCEPT_FLOW = `
 flowchart LR
-    household["Household"]
-    domain["Domain / Sector"]
-    goal["Goal (start date + end date)"]
-    task["Task (duration)"]
+    household["Household / Workspace"]
+    domain["Domain (sectors table)"]
+    goal["Goal (start_date + end_date)"]
+    task["Task (duration_min, priority)"]
     suggestion["Scheduling recommendations"]
-    schedule["Schedule item"]
+    schedule["Schedule Item"]
     google["Google Calendar"]
 
     household --> domain
@@ -48,8 +50,10 @@ erDiagram
         text description
         date start_date
         date end_date
-        int priority
+        date deadline
+        int priority FK
         boolean is_completed
+        timestamptz completed_at
         timestamptz created_at
     }
     TASKS {
@@ -57,7 +61,7 @@ erDiagram
         uuid goal_id FK
         text name
         int duration_min
-        int priority
+        int priority FK
         boolean is_completed
         boolean is_recurring
         text recurrence_rule
@@ -78,25 +82,35 @@ erDiagram
         uuid user_id FK
         text label
         int day_of_week
+        int[] recurrence_days
         time start_time
         time end_time
+        timestamptz created_at
     }
     CALENDAR_CONNECTIONS {
         uuid id PK
         uuid user_id FK
         text provider
         text calendar_id
+        text access_token_encrypted
+        text refresh_token_encrypted
         timestamptz expires_at
+        timestamptz updated_at
+        timestamptz created_at
     }
     EXTERNAL_CALENDAR_EVENTS {
         uuid id PK
         uuid user_id FK
         text provider
+        text calendar_id
         text google_event_id
         text title
         timestamptz starts_at
         timestamptz ends_at
         boolean is_busy
+        timestamptz last_synced_at
+        jsonb metadata
+        timestamptz created_at
     }
     USER_BEHAVIOR_EVENTS {
         uuid id PK
@@ -118,8 +132,8 @@ erDiagram
     SECTORS ||--o{ GOALS : "contains"
     GOALS ||--o{ TASKS : "breaks into"
     TASKS ||--o{ SCHEDULE_ITEMS : "scheduled as"
+    PROFILES |o--o{ SCHEDULE_ITEMS : "schedules"
     PROFILES ||--o{ USER_CONSTRAINTS : "defines"
-    PROFILES ||--o{ SCHEDULE_ITEMS : "schedules"
     PROFILES ||--o{ CALENDAR_CONNECTIONS : "connects"
     PROFILES ||--o{ EXTERNAL_CALENDAR_EVENTS : "imports"
     PROFILES ||--o{ USER_BEHAVIOR_EVENTS : "generates"
@@ -131,25 +145,32 @@ erDiagram
 `
 
 const entities = [
-  ['HOUSEHOLDS', 'Root collaboration boundary. Every user and domain belongs to a household.'],
-  ['SECTORS / DOMAINS', 'The main planning headings: Personal, Studies, Career, Family. No dates or planning metadata live here.'],
-  ['GOALS', 'Concrete outcomes under a domain. Every goal must have start_date and end_date.'],
-  ['TASKS', 'Practical actions under a goal. Tasks inherit the goal window and have a duration in minutes.'],
-  ['SCHEDULE_ITEMS', 'Calendar placements for tasks, including status and Google event mapping.'],
-  ['USER_CONSTRAINTS', 'Blocked or unavailable time windows that recommendations must respect.'],
-  ['USER_BEHAVIOR_EVENTS', 'Lightweight learning log for user actions and feedback.'],
+  ['HOUSEHOLDS', 'Root collaboration boundary. Every user, domain, goal, and task belongs to a household.'],
+  ['PROFILES', 'One profile per auth user. Holds display name, role (admin/member), and the household the user belongs to.'],
+  ['SECTORS / DOMAINS', '"Domain" is the product-facing term. The database table is `sectors`. Domains are stable life areas (e.g. Career, Health, Family) — they are headings only and do not hold planning dates.'],
+  ['GOALS', 'Concrete outcomes under a domain. Every goal has a required start_date and end_date defining its execution window.'],
+  ['TASKS', 'Practical actions under a goal. Each task has a duration in minutes and a priority. Tasks are intended to be scheduled inside the parent goal\'s date window — this is a product convention, not a database constraint.'],
+  ['SCHEDULE_ITEMS', 'Calendar placements for tasks. Tracks scheduled_start, scheduled_end, status (Pending/Done/Missed), and an optional Google Calendar event ID. scheduled_by is nullable (set to NULL if the scheduling user is deleted).'],
+  ['USER_CONSTRAINTS', 'Blocked or unavailable time windows that the scheduling engine must respect. Supports single-day (day_of_week) and multi-day recurrence (recurrence_days int[]).'],
+  ['CALENDAR_CONNECTIONS', 'One OAuth connection record per user per calendar provider. Tokens are stored AES-256-GCM encrypted at the application layer — never exposed to the client.'],
+  ['EXTERNAL_CALENDAR_EVENTS', 'Events synced from the user\'s external calendar (Google Calendar). Used by the scheduling engine to avoid double-booking. Includes metadata for provider-specific fields.'],
+  ['USER_BEHAVIOR_EVENTS', 'Append-only learning log for every scheduling action the user takes. Provides optional context via nullable task_id, goal_id, and schedule_item_id FKs. Intended for future personalization and ML recommendations.'],
+  ['PRIORITY_LEVELS', 'Global reference table: 1 = High, 2 = Medium, 3 = Low. Referenced by both Goals and Tasks via integer FK.'],
 ]
 
 const normalForms = [
   ['sectors', '3NF', 'id -> household_id, name. Domains intentionally have no quarter/date attributes.'],
-  ['goals', '3NF', 'id -> sector_id, name, start_date, end_date, priority, is_completed.'],
+  ['goals', '3NF', 'id -> sector_id, name, start_date, end_date, priority, is_completed. deadline kept for API backward-compat.'],
   ['tasks', '3NF', 'id -> goal_id, name, duration_min, priority, recurrence data.'],
-  ['schedule_items', '3NF', 'id -> task_id, scheduled_by, scheduled_start, scheduled_end, status, google_event_id.'],
+  ['schedule_items', '3NF', 'id -> task_id, scheduled_by (nullable), scheduled_start, scheduled_end, status, google_event_id.'],
+  ['user_constraints', '3NF', 'id -> user_id, label, day_of_week, recurrence_days, start_time, end_time.'],
   ['user_behavior_events', '3NF + flexible metadata', 'id -> user_id, event_type, optional context ids, metadata.'],
 ]
 
 async function getCounts() {
-  const supabase = await createClient()
+  // Architecture is a documentation page for course review/demo.
+  // Use the admin client to return system-wide row counts.
+  const admin = createAdminClient()
   const [
     households,
     profiles,
@@ -163,17 +184,17 @@ async function getCounts() {
     external,
     behavior,
   ] = await Promise.all([
-    supabase.from('households').select('id', { count: 'exact', head: true }),
-    supabase.from('profiles').select('id', { count: 'exact', head: true }),
-    supabase.from('sectors').select('id', { count: 'exact', head: true }),
-    supabase.from('user_constraints').select('id', { count: 'exact', head: true }),
-    supabase.from('goals').select('id', { count: 'exact', head: true }),
-    supabase.from('priority_levels').select('id', { count: 'exact', head: true }),
-    supabase.from('tasks').select('id', { count: 'exact', head: true }),
-    supabase.from('schedule_items').select('id', { count: 'exact', head: true }),
-    supabase.from('calendar_connections').select('id', { count: 'exact', head: true }),
-    supabase.from('external_calendar_events').select('id', { count: 'exact', head: true }),
-    supabase.from('user_behavior_events').select('id', { count: 'exact', head: true }),
+    admin.from('households').select('id', { count: 'exact', head: true }),
+    admin.from('profiles').select('id', { count: 'exact', head: true }),
+    admin.from('sectors').select('id', { count: 'exact', head: true }),
+    admin.from('user_constraints').select('id', { count: 'exact', head: true }),
+    admin.from('goals').select('id', { count: 'exact', head: true }),
+    admin.from('priority_levels').select('id', { count: 'exact', head: true }),
+    admin.from('tasks').select('id', { count: 'exact', head: true }),
+    admin.from('schedule_items').select('id', { count: 'exact', head: true }),
+    admin.from('calendar_connections').select('id', { count: 'exact', head: true }),
+    admin.from('external_calendar_events').select('id', { count: 'exact', head: true }),
+    admin.from('user_behavior_events').select('id', { count: 'exact', head: true }),
   ])
 
   return {
@@ -192,6 +213,10 @@ async function getCounts() {
 }
 
 export default async function ArchitecturePage() {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) redirect('/login')
+
   const counts = await getCounts()
 
   return (

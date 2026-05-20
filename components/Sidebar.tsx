@@ -45,9 +45,12 @@ export default function Sidebar({ userEmail, displayName, householdName, isAdmin
   }
 
   return (
-    <aside className="w-60 shrink-0 flex flex-col border-r bg-sidebar text-sidebar-foreground">
-      <div className="px-5 py-4 border-b">
-        <p className="font-bold text-lg">Goal-to-Grid</p>
+    <aside className="w-60 shrink-0 flex flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground">
+      <div className="px-5 py-4 border-b border-sidebar-border">
+        <p className="flex items-center gap-2 font-bold text-lg">
+          <span className="w-3 h-3 rounded-sm bg-primary shrink-0" />
+          Goal-to-Grid
+        </p>
         <p className="text-xs text-muted-foreground truncate">{householdName}</p>
       </div>
 
@@ -56,11 +59,11 @@ export default function Sidebar({ userEmail, displayName, householdName, isAdmin
           <Link
             key={href}
             href={href}
-            className={cn(
-              'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+              className={cn(
+              'flex items-center gap-3 rounded-md border border-transparent px-3 py-2 text-sm font-medium transition-colors',
               pathname === href || pathname.startsWith(href + '/')
-                ? 'bg-sidebar-primary text-sidebar-primary-foreground'
-                : 'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
+                ? 'border-sidebar-border bg-sidebar-accent text-sidebar-accent-foreground font-semibold'
+                : 'text-sidebar-foreground hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground'
             )}
           >
             <Icon className="h-4 w-4 shrink-0" />
@@ -78,10 +81,10 @@ export default function Sidebar({ userEmail, displayName, householdName, isAdmin
                 key={href}
                 href={href}
                 className={cn(
-                  'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                  'flex items-center gap-3 rounded-md border border-transparent px-3 py-2 text-sm font-medium transition-colors',
                   pathname === href || pathname.startsWith(href + '/')
-                    ? 'bg-sidebar-primary text-sidebar-primary-foreground'
-                    : 'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
+                    ? 'border-sidebar-border bg-sidebar-accent text-sidebar-accent-foreground font-semibold'
+                    : 'text-sidebar-foreground hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground'
                 )}
               >
                 <Icon className="h-4 w-4 shrink-0" />
@@ -92,7 +95,7 @@ export default function Sidebar({ userEmail, displayName, householdName, isAdmin
         )}
       </nav>
 
-      <div className="border-t px-4 py-3">
+      <div className="border-t border-sidebar-border px-4 py-3">
         <div className="flex items-center gap-2">
           <p className="text-sm font-medium truncate">{displayName || userEmail}</p>
           {isAdmin && <span className="text-xs bg-primary text-primary-foreground px-1.5 py-0.5 rounded">Admin</span>}

@@ -343,7 +343,7 @@ function GoalRow({ goal, onEdit, onDelete, onAddTask, onEditTask, onDeleteTask, 
   const pct = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0
 
   return (
-    <div className="rounded-md border bg-background">
+    <div className="rounded-md border bg-card shadow-sm">
       <div className="flex items-center gap-2 px-3 py-2 group">
         <button onClick={() => setExpanded(v => !v)} className="shrink-0 text-muted-foreground hover:text-foreground transition-colors">
           {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
@@ -395,8 +395,8 @@ function SectorRow({ sector, onEditSector, onDeleteSector, onAddGoal, onEditGoal
   const completedTasks = sector.goals.reduce((sum, g) => sum + g.tasks.filter(t => t.is_completed).length, 0)
 
   return (
-    <div className="rounded-lg border">
-      <div className="flex items-center gap-2 px-4 py-3 bg-muted/30 rounded-t-lg group">
+    <div className="rounded-lg border border-primary/15 bg-[oklch(0.94_0.025_235)] shadow-sm">
+      <div className="flex items-center gap-2 px-4 py-3 bg-[oklch(0.91_0.035_235)] rounded-t-lg group">
         <button onClick={() => setExpanded(v => !v)} className="shrink-0 text-muted-foreground hover:text-foreground transition-colors">
           {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
         </button>

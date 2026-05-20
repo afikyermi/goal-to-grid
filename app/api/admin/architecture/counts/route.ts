@@ -6,6 +6,8 @@ export async function GET() {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 })
 
+  // Architecture is a documentation page for course review/demo.
+  // Use admin client to return global system-wide counts (bypasses RLS).
   const admin = createAdminClient()
   const tables = [
     'households', 'profiles', 'sectors', 'user_constraints', 'goals',

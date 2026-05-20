@@ -11,6 +11,11 @@ type BoardSector = { id: string; name: string; goals: BoardGoal[] | null }
 
 const priorityVariant: Record<number, 'destructive' | 'default' | 'secondary'> = { 1: 'destructive', 2: 'default', 3: 'secondary' }
 const priorityLabel: Record<number, string> = { 1: 'High', 2: 'Medium', 3: 'Low' }
+const priorityBorderL: Record<number, string> = {
+  1: 'border-l-destructive',
+  2: 'border-l-[var(--priority-medium)]',
+  3: 'border-l-muted-foreground',
+}
 
 function formatShortDate(dateString: string): string {
   return new Date(dateString).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
@@ -39,7 +44,8 @@ function GoalCard({
 
   return (
     <div className={cn(
-      'rounded-md border transition-colors',
+      'rounded-md border-l-2 border transition-colors duration-300',
+      priorityBorderL[goal.priority],
       allDone ? 'border-primary/30 bg-primary/5' : 'bg-muted/20',
       isActive === true && 'ring-2 ring-primary ring-offset-1',
     )}>
@@ -53,10 +59,17 @@ function GoalCard({
             ? <ChevronDown className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
             : <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />}
           <div className="min-w-0 flex-1">
-            <p className={`text-sm font-medium leading-snug ${allDone ? 'text-muted-foreground line-through' : ''}`}>{goal.name}</p>
+            <p className={`text-sm font-medium leading-snug ${allDone ? 'text-muted-foreground line-through' : ''}`}>
+              {goal.name}
+            </p>
             <div className="mt-1.5 flex flex-wrap gap-1.5">
-              <Badge variant={priorityVariant[goal.priority]} className="text-xs">{priorityLabel[goal.priority]}</Badge>
-              <Badge variant="outline" className="text-xs">{goalDateWindow(goal)}</Badge>
+              {goal.priority === 1
+                ? <span className="bg-destructive/10 text-destructive border border-destructive/30 rounded-full px-2 py-0.5 text-xs font-medium">High</span>
+                : <Badge variant={priorityVariant[goal.priority]} className="text-xs">{priorityLabel[goal.priority]}</Badge>
+              }
+              <span className="bg-muted/50 text-muted-foreground text-xs px-2 py-0.5 rounded-full font-mono">
+                {goalDateWindow(goal)}
+              </span>
             </div>
           </div>
         </div>
@@ -64,12 +77,16 @@ function GoalCard({
         {totalCount > 0 && (
           <div className="mt-3 ml-6 space-y-1">
             <div className="flex justify-between text-xs text-muted-foreground">
-              <span>{completedCount} / {totalCount} tasks done</span>
-              <span className={progress === 100 ? 'font-semibold text-primary' : ''}>{progress}%</span>
+              <span className="font-mono tabular-nums">
+                {completedCount} / {totalCount} tasks done
+              </span>
+              <span className={`font-mono tabular-nums ${progress === 100 ? 'font-semibold text-primary' : ''}`}>
+                {progress}%
+              </span>
             </div>
-            <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+            <div className="h-2 w-full overflow-hidden rounded-full bg-muted/50">
               <div
-                className={`h-full rounded-full transition-all duration-500 ease-out ${progress === 100 ? 'bg-primary' : 'bg-primary/60'}`}
+                className={`h-full rounded-full transition-[width] duration-500 ease-out ${progress === 100 ? 'bg-[var(--status-done)]' : 'bg-primary'}`}
                 style={{ width: `${progress}%` }}
               />
             </div>
@@ -79,22 +96,30 @@ function GoalCard({
 
       {expanded && tasks.length > 0 && (
         <div className="space-y-1 px-3 pb-3">
-          {[...tasks].sort((a, b) => a.priority - b.priority).map(task => (
+          {[...tasks].sort((a, b) => a.priority - b.priority).map((task, idx) => (
             <button
               key={task.id}
               type="button"
-              className={`flex w-full items-center gap-3 rounded border px-2 py-2 text-left text-xs transition-colors ${
+              style={{ animationDelay: `${idx * 35}ms` }}
+              className={cn(
+                'ao-slide-up flex w-full items-center gap-3 rounded border px-2 py-2 text-left text-xs',
+                'transition-[background-color,transform,border-color] duration-150',
                 task.is_completed
-                  ? 'border-muted bg-muted/30 text-muted-foreground'
-                  : 'bg-background hover:bg-muted/30'
-              }`}
+                  ? 'border-muted bg-muted/30 text-muted-foreground opacity-80 cursor-default'
+                  : 'bg-background hover:bg-muted/30 hover:border-primary/30 hover:-translate-y-px active:translate-y-0',
+              )}
               onClick={() => onToggle(task.id, !task.is_completed)}
             >
               {task.is_completed
-                ? <CheckCircle2 className="h-4 w-4 shrink-0 text-primary" />
-                : <Circle className="h-4 w-4 shrink-0 text-muted-foreground" />}
-              <span className={`flex-1 truncate ${task.is_completed ? 'line-through' : ''}`}>{task.name}</span>
-              <span className="flex shrink-0 items-center gap-1 text-muted-foreground">
+                ? <CheckCircle2 className="h-4 w-4 shrink-0 text-[var(--status-done)] transition-all duration-100" />
+                : <Circle className="h-4 w-4 shrink-0 text-muted-foreground transition-all duration-100" />}
+              <span className={cn(
+                'flex-1 truncate transition-all duration-500',
+                task.is_completed ? 'line-through' : '',
+              )}>
+                {task.name}
+              </span>
+              <span className="flex shrink-0 items-center gap-1 text-muted-foreground font-mono text-[11px] bg-muted/50 rounded px-1">
                 <Clock className="h-3 w-3" />{formatDuration(task.duration_min)}
               </span>
             </button>
@@ -122,10 +147,10 @@ export default function DomainBoard({
           return byEndDate || a.priority - b.priority
         })
         return (
-          <div key={sector.id} className="rounded-lg border bg-background p-3">
-            <div className="mb-3 flex items-start justify-between gap-3">
+          <div key={sector.id} className="rounded-lg border border-primary/15 bg-[oklch(0.94_0.025_235)] p-3 shadow-sm">
+            <div className="mb-3 flex items-start justify-between gap-3 -mx-3 -mt-3 px-3 py-2 rounded-t-lg bg-[oklch(0.91_0.035_235)] border-b border-primary/15">
               <p className="font-semibold">{sector.name}</p>
-              <Badge variant="secondary">{goals.length} goals</Badge>
+              <Badge className="font-mono tabular-nums bg-primary/15 text-primary border border-primary/20 hover:bg-primary/15">{goals.length} goals</Badge>
             </div>
             <div className="space-y-2">
               {goals.length === 0 ? (

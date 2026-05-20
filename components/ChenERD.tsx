@@ -20,6 +20,7 @@ const C = {
   attr: '#22C55E',
   attrPK: '#15803D',
   line: '#6B7280',
+  ctxLine: '#94A3B8', // dashed — nullable context FK
   text: '#FFFFFF',
   card: '#111827',
 }
@@ -53,35 +54,48 @@ function Attr({ cx, cy, rx, label, isKey }: { cx: number; cy: number; rx: number
   )
 }
 
-function edge(x1: number, y1: number, x2: number, y2: number, key: string) {
-  return <line key={key} x1={x1} y1={y1} x2={x2} y2={y2} stroke={C.line} strokeWidth="1.5" />
+function edge(x1: number, y1: number, x2: number, y2: number, key: string, dashed?: boolean) {
+  return (
+    <line
+      key={key}
+      x1={x1} y1={y1} x2={x2} y2={y2}
+      stroke={dashed ? C.ctxLine : C.line}
+      strokeWidth="1.5"
+      strokeDasharray={dashed ? '6 4' : undefined}
+    />
+  )
 }
 
 export default function ChenERD({ counts }: { counts: AllEntityCounts }) {
   const E = {
     households: { cx: 760, cy: 70 },
-    profiles: { cx: 260, cy: 250 },
-    sectors: { cx: 760, cy: 250 },
-    constraints: { cx: 260, cy: 450 },
-    goals: { cx: 760, cy: 450 },
-    tasks: { cx: 760, cy: 650 },
-    schedule: { cx: 760, cy: 850 },
-    calendar: { cx: 1210, cy: 850 },
-    external: { cx: 1210, cy: 650 },
-    behavior: { cx: 260, cy: 850 },
-    priority: { cx: 1210, cy: 450 },
+    profiles:   { cx: 260, cy: 250 },
+    sectors:    { cx: 760, cy: 250 },
+    constraints:{ cx: 260, cy: 450 },
+    goals:      { cx: 760, cy: 450 },
+    tasks:      { cx: 760, cy: 650 },
+    schedule:   { cx: 760, cy: 850 },
+    calendar:   { cx: 1210, cy: 550 },
+    external:   { cx: 1210, cy: 750 },
+    behavior:   { cx: 260, cy: 850 },
+    priority:   { cx: 1210, cy: 350 },
   }
 
   return (
-    <svg viewBox="0 0 1480 960" className="w-full h-auto rounded-lg border bg-white dark:bg-zinc-950" style={{ minHeight: 500 }}>
-      <rect x="20" y="20" width="260" height="82" rx="6" fill="white" stroke="#E5E7EB" strokeWidth="1.5" />
+    <svg viewBox="0 0 1480 1020" className="w-full h-auto rounded-lg border bg-white dark:bg-zinc-950" style={{ minHeight: 500 }}>
+
+      {/* ── Legend ───────────────────────────────────────── */}
+      <rect x="20" y="20" width="280" height="110" rx="6" fill="white" stroke="#E5E7EB" strokeWidth="1.5" />
       <rect x="34" y="34" width="22" height="16" rx="2" fill={C.entity} />
       <text x="63" y="42" fontSize="10" fill="#374151" dominantBaseline="middle">Entity with live row count</text>
       <path d="M34,67 L45,58 L56,67 L45,76 Z" fill={C.rel} />
       <text x="63" y="67" fontSize="10" fill="#374151" dominantBaseline="middle">Relationship</text>
       <ellipse cx="45" cy="90" rx="20" ry="12" fill={C.attr} />
       <text x="63" y="90" fontSize="10" fill="#374151" dominantBaseline="middle">Attribute</text>
+      <line x1="34" y1="113" x2="56" y2="113" stroke={C.ctxLine} strokeWidth="1.5" strokeDasharray="6 4" />
+      <text x="63" y="113" fontSize="10" fill="#374151" dominantBaseline="middle">Nullable context FK</text>
 
+      {/* ── Core hierarchy edges ─────────────────────────── */}
       {edge(E.households.cx, E.households.cy, 510, 160, 'h1')}
       {edge(510, 160, E.profiles.cx, E.profiles.cy, 'h2')}
       {edge(E.households.cx, E.households.cy, 760, 160, 'h3')}
@@ -92,28 +106,51 @@ export default function ChenERD({ counts }: { counts: AllEntityCounts }) {
       {edge(760, 550, E.tasks.cx, E.tasks.cy, 'g2')}
       {edge(E.tasks.cx, E.tasks.cy, 760, 750, 't1')}
       {edge(760, 750, E.schedule.cx, E.schedule.cy, 't2')}
+
+      {/* ── Profiles → constraints ───────────────────────── */}
       {edge(E.profiles.cx, E.profiles.cy, 260, 350, 'p1')}
       {edge(260, 350, E.constraints.cx, E.constraints.cy, 'p2')}
-      {edge(E.profiles.cx, E.profiles.cy, 440, 550, 'p3')}
-      {edge(440, 550, E.behavior.cx, E.behavior.cy, 'p4')}
-      {edge(E.schedule.cx, E.schedule.cy, 510, 850, 'b1')}
-      {edge(510, 850, E.behavior.cx, E.behavior.cy, 'b2')}
-      {edge(E.priority.cx, E.priority.cy, 985, 450, 'pr1')}
-      {edge(985, 450, E.goals.cx, E.goals.cy, 'pr2')}
-      {edge(E.calendar.cx, E.calendar.cy, 1210, 750, 'c1')}
-      {edge(1210, 750, E.external.cx, E.external.cy, 'c2')}
 
+      {/* ── Profiles → calendar_connections (direct FK) ──── */}
+      {edge(E.profiles.cx, E.profiles.cy, 530, 400, 'pc1')}
+      {edge(530, 400, E.calendar.cx, E.calendar.cy, 'pc2')}
+
+      {/* ── Profiles → external_calendar_events (direct FK) ─ */}
+      {edge(E.profiles.cx, E.profiles.cy, 480, 500, 'pe1')}
+      {edge(480, 500, E.external.cx, E.external.cy, 'pe2')}
+
+      {/* ── Priority → goals and tasks ───────────────────── */}
+      {edge(E.priority.cx, E.priority.cy, 985, 350, 'pr1')}
+      {edge(985, 350, E.goals.cx, E.goals.cy, 'pr2')}
+      {edge(E.priority.cx, E.priority.cy, 985, 500, 'pr3')}
+      {edge(985, 500, E.tasks.cx, E.tasks.cy, 'pr4')}
+
+      {/* ── Profiles → behavior (generates) ─────────────── */}
+      {edge(E.profiles.cx, E.profiles.cy, 260, 650, 'pb1')}
+      {edge(260, 650, E.behavior.cx, E.behavior.cy, 'pb2')}
+
+      {/* ── Nullable context FKs → user_behavior_events ─── */}
+      {edge(E.goals.cx, E.goals.cy, 510, 650, 'gb1', true)}
+      {edge(510, 650, E.behavior.cx, E.behavior.cy, 'gb2', true)}
+      {edge(E.tasks.cx, E.tasks.cy, 510, 750, 'tb1', true)}
+      {edge(510, 750, E.behavior.cx, E.behavior.cy, 'tb2', true)}
+      {edge(E.schedule.cx, E.schedule.cy, 510, 850, 'sb1', true)}
+      {edge(510, 850, E.behavior.cx, E.behavior.cy, 'sb2', true)}
+
+      {/* ── Relationship diamonds ─────────────────────────── */}
       <Rel cx={510} cy={160} label="has" />
       <Rel cx={760} cy={160} label="owns" />
       <Rel cx={760} cy={350} label="contains" />
       <Rel cx={760} cy={550} label="breaks into" hw={70} />
       <Rel cx={760} cy={750} label="scheduled as" hw={78} />
       <Rel cx={260} cy={350} label="defines" />
-      <Rel cx={440} cy={550} label="generates" hw={68} />
-      <Rel cx={510} cy={850} label="records" />
-      <Rel cx={985} cy={450} label="classifies" hw={70} />
-      <Rel cx={1210} cy={750} label="imports" />
+      <Rel cx={530} cy={400} label="connects" hw={62} />
+      <Rel cx={480} cy={500} label="imports" hw={60} />
+      <Rel cx={985} cy={350} label="classifies" hw={70} />
+      <Rel cx={985} cy={500} label="classifies" hw={70} />
+      <Rel cx={260} cy={650} label="generates" hw={68} />
 
+      {/* ── Attributes ──────────────────────────────────── */}
       <Attr cx={760} cy={18} rx={20} label="id" isKey />
       <Attr cx={650} cy={42} rx={34} label="name" />
       <Attr cx={760} cy={202} rx={20} label="id" isKey />
@@ -123,6 +160,7 @@ export default function ChenERD({ counts }: { counts: AllEntityCounts }) {
       <Attr cx={900} cy={650} rx={60} label="duration_min" />
       <Attr cx={900} cy={850} rx={68} label="scheduled_start" />
 
+      {/* ── Entities ────────────────────────────────────── */}
       <Ent cx={E.households.cx} cy={E.households.cy} label="HOUSEHOLDS" count={counts.households} />
       <Ent cx={E.profiles.cx} cy={E.profiles.cy} label="PROFILES" count={counts.profiles} />
       <Ent cx={E.sectors.cx} cy={E.sectors.cy} label="SECTORS / DOMAINS" count={counts.sectors} w={220} />
@@ -132,7 +170,7 @@ export default function ChenERD({ counts }: { counts: AllEntityCounts }) {
       <Ent cx={E.tasks.cx} cy={E.tasks.cy} label="TASKS" count={counts.tasks} w={150} />
       <Ent cx={E.schedule.cx} cy={E.schedule.cy} label="SCHEDULE_ITEMS" count={counts.schedule_items} w={220} />
       <Ent cx={E.calendar.cx} cy={E.calendar.cy} label="CALENDAR_CONNECTIONS" count={counts.calendar_connections} w={250} />
-      <Ent cx={E.external.cx} cy={E.external.cy} label="EXTERNAL_CALENDAR_EVENTS" count={counts.external_calendar_events} w={270} />
+      <Ent cx={E.external.cx} cy={E.external.cy} label="EXT_CALENDAR_EVENTS" count={counts.external_calendar_events} w={250} />
       <Ent cx={E.behavior.cx} cy={E.behavior.cy} label="USER_BEHAVIOR_EVENTS" count={counts.user_behavior_events} w={250} />
     </svg>
   )
