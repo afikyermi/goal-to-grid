@@ -611,18 +611,16 @@ export default function SchedulePage() {
     }
   }, [weekStart, windowEnd])
 
-  // Kept for places that need both refreshed together (e.g. after sync)
-  const fetchItems = useCallback(async () => {
-    await Promise.all([fetchScheduleItems(), fetchExternalEvents()])
-  }, [fetchScheduleItems, fetchExternalEvents])
-
   const fetchCalendarStatus = useCallback(async () => {
     const res = await fetch('/api/calendar/status')
     setCalendarStatus(res.ok ? await res.json() : null)
   }, [])
 
   // Refetch schedule items whenever the week changes
-  useEffect(() => { void fetchScheduleItems() }, [fetchScheduleItems])
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void fetchScheduleItems()
+  }, [fetchScheduleItems])
 
   // Runs once on mount — marks overdue Pending items as Missed, creates new Pending slots
   useEffect(() => {
@@ -645,6 +643,7 @@ export default function SchedulePage() {
   // On mount: tasks, calendar status, constraints, URL params
   useEffect(() => {
     fetch('/api/tasks').then(r => r.ok ? r.json() : []).then(setAllTasks)
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void fetchCalendarStatus()
     fetch('/api/constraints').then(r => r.ok ? r.json() : []).then(setConstraints)
 
@@ -663,6 +662,7 @@ export default function SchedulePage() {
 
   // Auto-import Google events whenever the week changes (read-only, background)
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void fetchCalendarStatus().then(() => {
       // calendarStatus is stale here — check after fetch via a local flag
     })
@@ -907,30 +907,12 @@ export default function SchedulePage() {
     try {
       const res = await fetch('/api/calendar/sync', { method: 'POST' })
       const json = await res.json()
+      if (!res.ok) {
+        setSyncMsg(json.detail ? `${json.error ?? json.message ?? 'Google Calendar sync failed.'} ${json.detail}` : json.error ?? json.message ?? 'Google Calendar sync failed.')
+        return
+      }
       setSyncMsg(json.detail ? `${json.message} ${json.detail}` : json.message ?? 'Google Calendar sync finished.')
       await fetchScheduleItems()
-    } finally {
-      setTimeout(() => setSyncing(false), 10000)
-    }
-  }
-
-  async function handleImportGoogleEvents() {
-    if (syncing) return
-    setSyncMsg(null)
-    setSyncing(true)
-    try {
-      const res = await fetch('/api/calendar/import', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ timeMin: weekStart.toISOString(), timeMax: windowEnd.toISOString() }),
-      })
-      const json = await res.json()
-      if (!res.ok) { setSyncMsg(json.error ?? 'Failed to import Google events'); return }
-      setSyncMsg(json.imported > 0
-        ? `Google Calendar refreshed: ${json.imported} busy event(s) loaded for this week.`
-        : 'Google Calendar refreshed. No busy events were found for this week.'
-      )
-      await fetchExternalEvents()
     } finally {
       setTimeout(() => setSyncing(false), 10000)
     }
