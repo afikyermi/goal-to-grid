@@ -103,11 +103,11 @@ This document tracks the development stages and individual tasks for the Goal-to
 
 ## Stage 9 — Architecture / ERD Page
 
-- [x] Build `/admin/architecture` page (admin-only route)
+- [x] Build `/admin/architecture` page as an authenticated internal documentation route
 - [x] Create `ChenERD.tsx`: hand-crafted SVG entity-relationship diagram using Chen notation, with manually positioned entities, attributes, and relationship connectors
 - [x] Create `MermaidDiagram.tsx`: component that renders a Mermaid diagram string; used for an ER diagram of the full schema
 - [x] Create `LiveArchitectureDashboard.tsx`: displays live entity counts fetched from the API; updates in real time
-- [x] Create `GET /api/admin/architecture/counts`: query entity counts (households, profiles, sectors, goals, tasks, schedule items, external events, behavior events) and return them as JSON; admin-only endpoint
+- [x] Create `GET /api/admin/architecture/counts`: query entity counts (households, profiles, sectors, goals, tasks, schedule items, external events, behavior events) and return them as JSON for the Architecture page
 
 ---
 
@@ -134,6 +134,6 @@ This document tracks the development stages and individual tasks for the Goal-to
 - [x] Debug and fix Google Calendar sync cleanup (handling stale `google_event_id` references and permission edge cases)
 - [x] Fix TypeScript type assertion in calendar integration to prevent spread signature collapse
 - [x] Resolve RLS edge cases that blocked cross-user household scheduling reads
-- [ ] Write `PRD.md`
-- [ ] Write `tasks.md`
-- [ ] Write `README.md`
+- [x] Write `PRD.md`
+- [x] Write `tasks.md`
+- [x] Write `README.md`

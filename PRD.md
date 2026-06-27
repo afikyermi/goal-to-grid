@@ -29,12 +29,12 @@ The database schema and workspace model support household context — multiple u
 1. User registers and creates a household workspace.
 2. User defines sectors (life domains), e.g. "Career", "Health", "Education".
 3. Under each sector, user creates goals with a name, start date, end date, and priority.
-4. Under each goal, user creates tasks with a name, estimated duration (in minutes), and priority. Tasks may be one-off or recurring (iCalendar RRULE format).
+4. Under each goal, user creates tasks with a name, estimated duration (in minutes), and priority. Tasks may store an optional recurrence rule (iCalendar RRULE format) for future recurring-scheduling support.
 5. User opens the Schedule page and places tasks on specific time slots — either by dragging from the backlog onto the calendar, or by asking the scheduling engine for slot suggestions.
 6. The scheduling engine checks the user's availability constraints (defined on the Constraints page) and existing scheduled items to avoid conflicts.
 7. Optionally, the user connects their Google Calendar account. Goal-to-Grid can then create and manage schedule-item events in Google Calendar, and import external Google Calendar events so that they appear as busy blocks during scheduling.
 8. The Dashboard page aggregates progress across all sectors, shows upcoming schedule items, and highlights tasks that have been missed.
-9. The Architecture page provides a full entity-relationship diagram and live entity counts, documenting the data model.
+9. The Architecture page provides a full entity-relationship diagram and live entity counts, documenting the data model for review and maintenance.
 
 ---
 
@@ -46,7 +46,7 @@ The database schema and workspace model support household context — multiple u
 - **Household workspace** — Each user belongs to a household. All data (sectors, goals, tasks, schedule items) is scoped to that household.
 - **Sector management** — Create, edit, and delete life-area sectors. Sectors act as the top-level organizational unit below the household.
 - **Goal management** — Create goals linked to a sector. Goals have a name, optional description, start date, end date, priority (High / Medium / Low), and a completion flag.
-- **Task management** — Create tasks linked to a goal. Tasks have a name, duration in minutes, priority, and an optional recurrence rule. Tasks can be marked complete.
+- **Task management** — Create tasks linked to a goal. Tasks have a name, duration in minutes, priority, and an optional recurrence rule field for future recurring-task support. Tasks can be marked complete.
 - **Plan view** — A hierarchical page showing all sectors, their goals, and the tasks under each goal in one place.
 - **Schedule page** — A weekly calendar grid. Unscheduled tasks are shown in a backlog panel. Users can drag a task onto the calendar to schedule it, or open a scheduling dialog.
 - **Drag-and-drop scheduling** — Powered by @dnd-kit. Schedule items can be placed on any time slot. Optimistic updates with rollback on failure.
@@ -59,7 +59,7 @@ The database schema and workspace model support household context — multiple u
   - Goal-to-Grid can create, update, and delete its own events in the user's Google Calendar.
   - External Google Calendar events can be imported and stored locally to serve as busy blocks during scheduling.
   - The connection can be removed, which deletes the stored local Google Calendar connection.
-- **Architecture page** — An admin-accessible page at `/admin/architecture` that shows:
+- **Architecture page** — An authenticated internal documentation page at `/admin/architecture` that shows:
   - A hand-crafted SVG Chen entity-relationship diagram of the database schema.
   - A Mermaid-rendered ER diagram.
   - Live counts of entities (sectors, goals, tasks, schedule items, etc.) via a dedicated API endpoint.
@@ -95,7 +95,7 @@ The database schema and workspace model support household context — multiple u
 | 9 | As a user, I can define availability constraints (e.g. "no work on Monday and Wednesday evenings from 7–10 PM") and the scheduling engine will avoid those windows. |
 | 10 | As a user, I can trigger auto-reschedule to have overdue missed tasks automatically placed in the next available slot within the coming week. |
 | 11 | As a user, I can connect my Google Calendar via OAuth. After connecting, I can push my Goal-to-Grid schedule items to Google Calendar, and import my external Google events to display as busy blocks. |
-| 12 | As an admin, I can view the Architecture page to see the full database entity-relationship diagram and live entity counts. I can also manage user roles from the admin panel. |
+| 12 | As an authenticated user, I can view the Architecture page to understand the database entity-relationship diagram and live entity counts. As an admin, I can also manage user roles from the admin panel. |
 
 ---
 
@@ -170,9 +170,9 @@ All tables have RLS enabled. Users access only data within their household. The 
 | **Supabase Auth** | User registration, login, session management, password recovery |
 | **Google Calendar API v3** | OAuth 2.0 integration; scopes: `calendar.events` (read/write) and `calendar.readonly` (list calendars) |
 
-### Internal API Routes (26 endpoints)
+### Internal API Routes
 
-The application exposes a REST-style internal API under `/api/`:
+The application exposes REST-style internal API routes under `/api/`:
 
 - **CRUD:** `/api/sectors`, `/api/goals`, `/api/tasks`, `/api/schedule`, `/api/constraints` (each with `[id]` sub-routes for GET/PATCH/DELETE)
 - **Scheduling:** `/api/schedule/suggestions`, `/api/schedule/reschedule`
@@ -190,7 +190,7 @@ The project is considered complete when:
 
 - [x] All CRUD flows (sectors, goals, tasks, constraints, schedule items) work end-to-end.
 - [x] The scheduling engine proposes constraint-aware slots and auto-reschedule runs correctly.
-- [x] Google Calendar connection, event push, and external event import work for a real Google account.
+- [x] Google Calendar connection works for a real Google account, including event push for Goal-to-Grid-managed schedule items and import of external events as busy blocks.
 - [x] The Architecture page renders the ERD diagrams and live entity counts.
 - [x] All app pages require authentication and are scoped to the user's household.
 - [x] All migrations have been applied and RLS policies are enforced.

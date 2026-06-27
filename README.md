@@ -26,7 +26,7 @@ Every scheduled item traces back to a goal and a life area. This makes it possib
 - **User constraints** — Define availability blocks (e.g. evenings, specific days) that the scheduling engine avoids.
 - **Google Calendar integration** — Connect a Google account to create and manage Goal-to-Grid events in Google Calendar, and import external events as busy blocks for scheduling context.
 - **Dashboard** — Live overview of domain effort, upcoming schedule items, open backlog, and weekly completion stats.
-- **Architecture / ERD page** — Hand-crafted SVG Chen diagram and Mermaid ER diagram of the full database schema, with live entity counts. Accessible to admin users.
+- **Architecture / ERD page** — Hand-crafted SVG Chen diagram and Mermaid ER diagram of the full database schema, with live entity counts for authenticated users.
 - **Admin panel** — View and manage user roles.
 
 ---
@@ -79,6 +79,21 @@ Every scheduled item traces back to a goal and a life area. This makes it possib
 
    Create `.env.local` in the project root and fill in the values for your Supabase project and Google Cloud OAuth credentials.
 
+   Required variable names:
+
+   ```env
+   NEXT_PUBLIC_SUPABASE_URL=
+   NEXT_PUBLIC_SUPABASE_ANON_KEY=
+   SUPABASE_SERVICE_ROLE_KEY=
+   NEXT_PUBLIC_APP_URL=
+   GOOGLE_CLIENT_ID=
+   GOOGLE_CLIENT_SECRET=
+   GOOGLE_REDIRECT_URI=
+   GOOGLE_TOKEN_ENCRYPTION_KEY=
+   ```
+
+   Do not commit `.env.local` or any real secret values to GitHub.
+
 4. **Apply database migrations**
 
    In your Supabase project, run the migration files in order from `supabase/migrations/`:
@@ -114,7 +129,7 @@ Every scheduled item traces back to a goal and a life area. This makes it possib
 | **Supabase Auth** | User registration, login, session management, password recovery |
 | **Google Calendar API v3** | OAuth 2.0 integration for creating/managing events and importing external calendar events |
 
-The application exposes an internal REST API under `/api/` with 26 endpoints covering CRUD operations for all entities, the scheduling engine, Google Calendar integration, dashboard aggregation, and admin functions.
+The application exposes internal REST API routes under `/api/` covering CRUD operations for all entities, the scheduling engine, Google Calendar integration, dashboard aggregation, and admin functions.
 
 ---
 
@@ -124,7 +139,6 @@ The application exposes an internal REST API under `/api/` with 26 endpoints cov
 - **Scheduling granularity** — The scheduling engine works at 15-minute slot increments.
 - **Household collaboration** — The database schema and workspace model support multiple members per household, but the current UI is primarily focused on individual planning. Shared features are limited to privacy-preserving busy blocks visible on the schedule page.
 - **No autonomous scheduling** — The engine suggests slots and can auto-reschedule missed items, but the user must approve all scheduling decisions. There is no AI-driven automatic planning.
-- **Workflow page** — The `/workflow` route directory exists in the codebase but does not have a page implementation yet.
 - **Behavior events** — The append-only behavior event log (recording actions like scheduling, moving, and deleting tasks) is fully implemented at the data layer but has no UI or analytics dashboard yet.
 
 ---
