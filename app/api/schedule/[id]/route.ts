@@ -4,6 +4,8 @@ import { recordBehaviorEvent } from '@/lib/behavior/events'
 import { scheduleItemBelongsToUser } from '@/lib/server/workspace'
 import { NextRequest } from 'next/server'
 
+const SCHEDULE_SELECT = '*, tasks(id, name, duration_min, priority, goal_id, task_type, inbox_status, goals(id, name, start_date, end_date))'
+
 function isOutsideGoalWindow(
   start: string,
   end: string,
@@ -47,13 +49,13 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     .from('schedule_items')
     .update(updates)
     .eq('id', id)
-    .select('*, tasks(id, name, duration_min, priority, goal_id, goals(id, name, start_date, end_date))')
+    .select(SCHEDULE_SELECT)
     .single()
 
   if (error) return Response.json({ error: error.message }, { status: 500 })
   const task = data.tasks as {
     id: string
-    goal_id: string
+    goal_id: string | null
     goals?: { id: string; name: string; start_date: string; end_date: string } | null
   }
   const outsideGoalWindow = isOutsideGoalWindow(data.scheduled_start, data.scheduled_end, task.goals)

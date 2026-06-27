@@ -18,10 +18,11 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { AlertTriangle, CalendarPlus, CalendarSync, CheckCircle2, ChevronLeft, ChevronRight, GripVertical, Pencil, Trash2, Zap, Plus } from 'lucide-react'
-import type { ExternalCalendarEvent, ScheduleItemWithTask, Task, TaskWithGoal, UserConstraint } from '@/lib/types'
+import type { ExternalCalendarEvent, GoalWithSector, ScheduleItemWithTask, Task, TaskWithGoal, UserConstraint } from '@/lib/types'
 import { cn, formatDuration } from '@/lib/utils'
 
 type ViewMode = 'week' | 'agenda'
+type ManualMode = 'existing' | 'new_planned' | 'new_inbox'
 
 type CalendarEntry =
   | { kind: 'site'; item: ScheduleItemWithTask }
@@ -62,6 +63,13 @@ const PRIORITY_LABELS: Record<number, string> = {
 
 function siteStatusClass(status: string, isLong = false): string {
   return STATUS_COLORS[status]?.[isLong ? 'long' : 'normal'] ?? STATUS_COLORS.Pending.normal
+}
+
+function inboxTaskClass(isLong = false): string {
+  return cn(
+    'bg-[oklch(0.88_0.055_235)] border-[oklch(0.55_0.12_235)] text-[oklch(0.24_0.10_235)]',
+    isLong && 'opacity-55'
+  )
 }
 
 const DAY_START_HOUR = 0
@@ -512,6 +520,7 @@ function DraggableEventBlock({
     >
       <div className="truncate font-medium">{entryTitle(entry)}</div>
       <div className="opacity-75">{shortTime(start)}</div>
+      {entry.kind === 'site' && entry.item.tasks.task_type === 'inbox' && <div className="mt-1 text-[10px] uppercase opacity-70">Inbox</div>}
       {entry.kind === 'external' && <div className="mt-1 text-[10px] uppercase opacity-70">Google</div>}
     </button>
   )
@@ -526,6 +535,7 @@ export default function SchedulePage() {
   const [selected, setSelected] = useState<CalendarEntry | null>(null)
   const [syncMsg, setSyncMsg] = useState<string | null>(null)
   const [allTasks, setAllTasks] = useState<TaskWithGoal[]>([])
+  const [goals, setGoals] = useState<GoalWithSector[]>([])
   const [manualOpen, setManualOpen] = useState(false)
   const [schedulerOpen, setSchedulerOpen] = useState(false)
   const [scheduling, setScheduling] = useState(false)
@@ -533,7 +543,15 @@ export default function SchedulePage() {
   const [suggestedSlots, setSuggestedSlots] = useState<SuggestedSlot[]>([])
   const [editingItem, setEditingItem] = useState<ScheduleItemWithTask | null>(null)
   const [manualForm, setManualForm] = useState({
-    task_id: '', date: toDateInput(new Date()), start_time: '09:00', durationHours: 0, durationMins: 30,
+    mode: 'existing' as ManualMode,
+    task_id: '',
+    newTaskName: '',
+    newTaskGoalId: '',
+    newTaskPriority: 2,
+    date: toDateInput(new Date()),
+    start_time: '09:00',
+    durationHours: 0,
+    durationMins: 30,
   })
   const [calendarStatus, setCalendarStatus] = useState<{
     configured: boolean
@@ -642,7 +660,8 @@ export default function SchedulePage() {
 
   // On mount: tasks, calendar status, constraints, URL params
   useEffect(() => {
-    fetch('/api/tasks').then(r => r.ok ? r.json() : []).then(setAllTasks)
+    fetch('/api/tasks?type=all').then(r => r.ok ? r.json() : []).then(setAllTasks)
+    fetch('/api/goals').then(r => r.ok ? r.json() : []).then(setGoals)
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void fetchCalendarStatus()
     fetch('/api/constraints').then(r => r.ok ? r.json() : []).then(setConstraints)
@@ -695,6 +714,7 @@ export default function SchedulePage() {
     [activeItems]
   )
   const unscheduledTasks = allTasks.filter(t => !scheduledTaskIds.has(t.id) && !t.is_completed)
+  const suggestableTasks = unscheduledTasks.filter(t => t.task_type === 'planned' && Boolean(t.goal_id))
   const hours = useMemo(
     () => Array.from({ length: DAY_END_HOUR - DAY_START_HOUR }, (_, i) => DAY_START_HOUR + i),
     []
@@ -755,7 +775,11 @@ export default function SchedulePage() {
     setEditingItem(null)
     const dm = task?.duration_min ?? 30
     setManualForm({
+      mode: task ? 'existing' : (opts ? 'new_inbox' : 'existing'),
       task_id: task?.id ?? '',
+      newTaskName: '',
+      newTaskGoalId: goals[0]?.id ?? '',
+      newTaskPriority: 2,
       date: opts?.date ?? toDateInput(new Date()),
       start_time: opts?.startTime ?? '09:00',
       durationHours: Math.floor(dm / 60),
@@ -770,7 +794,11 @@ export default function SchedulePage() {
     const dm = Math.max(5, Math.round((end.getTime() - start.getTime()) / 60000))
     setEditingItem(item)
     setManualForm({
+      mode: 'existing',
       task_id: item.task_id,
+      newTaskName: '',
+      newTaskGoalId: '',
+      newTaskPriority: 2,
       date: toDateInput(start),
       start_time: toTimeInput(start),
       durationHours: Math.floor(dm / 60),
@@ -826,15 +854,44 @@ export default function SchedulePage() {
   async function handleManualSubmit(e: { preventDefault(): void }) {
     e.preventDefault()
     const duration_min = manualForm.durationHours * 60 + manualForm.durationMins
+    if (duration_min < 5) {
+      setSyncMsg('Duration must be at least 5 minutes.')
+      return
+    }
+    if (!editingItem && manualForm.mode === 'existing' && !manualForm.task_id) {
+      setSyncMsg('Choose an existing task first.')
+      return
+    }
+    if (!editingItem && manualForm.mode !== 'existing' && !manualForm.newTaskName.trim()) {
+      setSyncMsg('Write a task name first.')
+      return
+    }
+    if (!editingItem && manualForm.mode === 'new_planned' && !manualForm.newTaskGoalId) {
+      setSyncMsg('Choose a goal for this planned task, or save it to Inbox.')
+      return
+    }
     const start = dateTimeLocal(manualForm.date, manualForm.start_time)
     const end = new Date(start.getTime() + duration_min * 60000)
     const endpoint = editingItem ? `/api/schedule/${editingItem.id}` : '/api/schedule'
+    const createBody = manualForm.mode === 'existing'
+      ? { task_id: manualForm.task_id, scheduled_start: start.toISOString(), scheduled_end: end.toISOString() }
+      : {
+          new_task: {
+            name: manualForm.newTaskName,
+            duration_min,
+            priority: manualForm.newTaskPriority,
+            task_type: manualForm.mode === 'new_inbox' ? 'inbox' : 'planned',
+            goal_id: manualForm.mode === 'new_planned' ? manualForm.newTaskGoalId : null,
+          },
+          scheduled_start: start.toISOString(),
+          scheduled_end: end.toISOString(),
+        }
     const res = await fetch(endpoint, {
       method: editingItem ? 'PATCH' : 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(editingItem
         ? { scheduled_start: start.toISOString(), scheduled_end: end.toISOString() }
-        : { task_id: manualForm.task_id, scheduled_start: start.toISOString(), scheduled_end: end.toISOString() }),
+        : createBody),
     })
     const json = await res.json()
     if (!res.ok) { setSyncMsg(json.error ?? 'Failed to save schedule item'); return }
@@ -845,6 +902,7 @@ export default function SchedulePage() {
     if (editingItem) {
       setItems(prev => prev.map(i => i.id === editingItem.id ? json as ScheduleItemWithTask : i))
     } else {
+      if (json.task) setAllTasks(prev => [...prev, json.task as TaskWithGoal])
       setItems(prev => [...prev, json.item as ScheduleItemWithTask])
     }
   }
@@ -1052,6 +1110,8 @@ export default function SchedulePage() {
         duration_min: task.duration_min,
         priority: task.priority,
         goal_id: task.goal_id,
+        task_type: task.task_type,
+        inbox_status: task.inbox_status,
         goals: (task as TaskWithGoal).goals ?? null,
       },
     }
@@ -1195,10 +1255,14 @@ export default function SchedulePage() {
 
   const weekLabel = `${shortDate(days[0])} - ${shortDate(days[6], true)}`
   const manualGoalWarning = (() => {
-    const task = allTasks.find(t => t.id === manualForm.task_id)
-    if (!task?.goals || !manualForm.date) return null
-    if (manualForm.date < task.goals.start_date || manualForm.date > task.goals.end_date) {
-      return `This task belongs to "${task.goals.name}", planned for ${task.goals.start_date} - ${task.goals.end_date}. You can still schedule it here.`
+    const goal = manualForm.mode === 'existing'
+      ? allTasks.find(t => t.id === manualForm.task_id)?.goals
+      : manualForm.mode === 'new_planned'
+        ? goals.find(g => g.id === manualForm.newTaskGoalId)
+        : null
+    if (!goal || !manualForm.date) return null
+    if (manualForm.date < goal.start_date || manualForm.date > goal.end_date) {
+      return `This task belongs to "${goal.name}", planned for ${goal.start_date} - ${goal.end_date}. You can still schedule it here.`
     }
     return null
   })()
@@ -1446,7 +1510,9 @@ export default function SchedulePage() {
                           const color = externalDisplayColor(entry)
                           const isLongEvent = entryDurationMinutes(entry) > 300
                           const colorClass = entry.kind !== 'external'
-                            ? siteStatusClass(entry.item.status, isLongEvent)
+                            ? entry.item.tasks.task_type === 'inbox'
+                              ? inboxTaskClass(isLongEvent)
+                              : siteStatusClass(entry.item.status, isLongEvent)
                             : ''
                           const extraStyle: React.CSSProperties = (() => {
                             if (entry.kind !== 'external') return {}
@@ -1621,29 +1687,110 @@ export default function SchedulePage() {
         <Dialog open={manualOpen} onOpenChange={next => { setManualOpen(next); if (!next) setEditingItem(null) }}>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>{editingItem ? 'Edit Scheduled Time' : 'Plan Task Manually'}</DialogTitle>
-              <DialogDescription>Choose the exact time. Press &quot;Sync to Google&quot; to push changes to Google Calendar.</DialogDescription>
+              <DialogTitle>{editingItem ? 'Edit Scheduled Time' : 'Plan or Capture Task'}</DialogTitle>
+              <DialogDescription>Choose the exact time. New quick tasks can stay in Inbox until you organize them.</DialogDescription>
             </DialogHeader>
             <form onSubmit={handleManualSubmit} className="space-y-4">
-              <div className="space-y-2">
-                <Label>Task</Label>
-                <select
-                  className="w-full border rounded-md px-3 py-2 text-sm bg-background"
-                  value={manualForm.task_id}
-                  onChange={e => {
-                    const task = allTasks.find(t => t.id === e.target.value)
-                    setManualForm(f => {
-                      const dm = task?.duration_min ?? (f.durationHours * 60 + f.durationMins)
-                      return { ...f, task_id: e.target.value, durationHours: Math.floor(dm / 60), durationMins: dm % 60 }
-                    })
-                  }}
-                  required
-                  disabled={!!editingItem}
-                >
-                  <option value="">Select a task...</option>
-                  {allTasks.map(task => <option key={task.id} value={task.id}>{task.name}</option>)}
-                </select>
-              </div>
+              {!editingItem && (
+                <div className="grid grid-cols-3 gap-2 rounded-lg border bg-muted/25 p-1">
+                  {[
+                    ['existing', 'Existing'],
+                    ['new_planned', 'New + Goal'],
+                    ['new_inbox', 'Inbox'],
+                  ].map(([mode, label]) => (
+                    <Button
+                      key={mode}
+                      type="button"
+                      variant={manualForm.mode === mode ? 'default' : 'ghost'}
+                      size="sm"
+                      onClick={() => setManualForm(f => ({ ...f, mode: mode as ManualMode }))}
+                    >
+                      {label}
+                    </Button>
+                  ))}
+                </div>
+              )}
+
+              {manualForm.mode === 'existing' || editingItem ? (
+                <div className="space-y-2">
+                  <Label>Task</Label>
+                  <select
+                    className="w-full border rounded-md px-3 py-2 text-sm bg-background"
+                    value={manualForm.task_id}
+                    onChange={e => {
+                      const task = allTasks.find(t => t.id === e.target.value)
+                      setManualForm(f => {
+                        const dm = task?.duration_min ?? (f.durationHours * 60 + f.durationMins)
+                        return { ...f, task_id: e.target.value, durationHours: Math.floor(dm / 60), durationMins: dm % 60 }
+                      })
+                    }}
+                    required
+                    disabled={!!editingItem}
+                  >
+                    <option value="">Select a task...</option>
+                    {allTasks.map(task => (
+                      <option key={task.id} value={task.id}>
+                        {task.task_type === 'inbox' ? '[Inbox] ' : ''}{task.name}
+                      </option>
+                    ))}
+                  </select>
+                  {manualForm.task_id && (
+                    <p className="text-xs text-muted-foreground">
+                      {(() => {
+                        const task = allTasks.find(t => t.id === manualForm.task_id)
+                        if (!task) return ''
+                        return task.goals ? `Goal: ${task.goals.name}` : 'Inbox task: not linked to a goal yet.'
+                      })()}
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-3 rounded-lg border p-3">
+                  <div className="space-y-2">
+                    <Label>Task name</Label>
+                    <Input
+                      placeholder={manualForm.mode === 'new_inbox' ? 'e.g. Call insurance' : 'e.g. Buy paint supplies'}
+                      value={manualForm.newTaskName}
+                      onChange={e => setManualForm(f => ({ ...f, newTaskName: e.target.value }))}
+                      required
+                    />
+                  </div>
+                  {manualForm.mode === 'new_planned' ? (
+                    <div className="space-y-2">
+                      <Label>Goal</Label>
+                      <select
+                        className="w-full border rounded-md px-3 py-2 text-sm bg-background"
+                        value={manualForm.newTaskGoalId}
+                        onChange={e => setManualForm(f => ({ ...f, newTaskGoalId: e.target.value }))}
+                        required
+                      >
+                        <option value="">Select a goal...</option>
+                        {goals.map(goal => (
+                          <option key={goal.id} value={goal.id}>
+                            {goal.sectors?.name ?? 'No domain'} / {goal.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : (
+                    <p className="rounded-md border border-dashed bg-muted/25 p-2 text-xs text-muted-foreground">
+                      This will be saved to Inbox. You can assign it to a goal later.
+                    </p>
+                  )}
+                  <div className="space-y-2">
+                    <Label>Priority</Label>
+                    <select
+                      className="w-full border rounded-md px-3 py-2 text-sm bg-background"
+                      value={manualForm.newTaskPriority}
+                      onChange={e => setManualForm(f => ({ ...f, newTaskPriority: Number(e.target.value) }))}
+                    >
+                      <option value={1}>High</option>
+                      <option value={2}>Medium</option>
+                      <option value={3}>Low</option>
+                    </select>
+                  </div>
+                </div>
+              )}
               <div className="grid grid-cols-3 gap-3">
                 <div className="space-y-2">
                   <Label>Date</Label>
@@ -1683,7 +1830,15 @@ export default function SchedulePage() {
                   {manualConstraintWarning}
                 </div>
               )}
-              <Button type="submit" className="w-full">{editingItem ? 'Save Time' : 'Place Task'}</Button>
+              <Button type="submit" className="w-full">
+                {editingItem
+                  ? 'Save Time'
+                  : manualForm.mode === 'new_inbox'
+                    ? 'Capture in Inbox'
+                    : manualForm.mode === 'new_planned'
+                      ? 'Create and Place Task'
+                      : 'Place Task'}
+              </Button>
             </form>
           </DialogContent>
         </Dialog>
@@ -1720,7 +1875,7 @@ export default function SchedulePage() {
               <DialogDescription>Select tasks and let the engine suggest available slots. You choose what gets placed.</DialogDescription>
             </DialogHeader>
             <div className="max-h-60 overflow-auto space-y-1 border rounded-md p-2">
-              {unscheduledTasks.map(t => (
+              {suggestableTasks.map(t => (
                 <label key={t.id} className="flex items-center gap-2 text-sm p-1 hover:bg-accent rounded cursor-pointer">
                   <input
                     type="checkbox"
@@ -1731,7 +1886,7 @@ export default function SchedulePage() {
                   <span className="text-muted-foreground ml-auto">{formatDuration(t.duration_min)}</span>
                 </label>
               ))}
-              {unscheduledTasks.length === 0 && <p className="text-sm text-muted-foreground p-2">No unscheduled tasks found.</p>}
+              {suggestableTasks.length === 0 && <p className="text-sm text-muted-foreground p-2">No planned unscheduled tasks found.</p>}
             </div>
             {suggestedSlots.length > 0 && (
               <div className="max-h-72 overflow-auto space-y-3 rounded-md border p-3">

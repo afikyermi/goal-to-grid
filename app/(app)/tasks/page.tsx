@@ -35,7 +35,7 @@ const defaultForm: FormState = { goal_id: '', name: '', durationHours: 0, durati
 
 function taskToForm(task: TaskWithGoal): FormState {
   return {
-    goal_id: task.goal_id,
+    goal_id: task.goal_id ?? '',
     name: task.name,
     durationHours: Math.floor(task.duration_min / 60),
     durationMins: task.duration_min % 60,

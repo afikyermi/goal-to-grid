@@ -49,7 +49,7 @@ function getGoalForm(editing: Goal | null, defaultSectorId: string): GoalForm {
 function getTaskForm(editing: Task | null, defaultGoalId: string): TaskForm {
   if (!editing) return { goal_id: defaultGoalId, name: '', durationHours: 0, durationMins: 30, priority: 2, is_recurring: false, recurrence_rule: '' }
   return {
-    goal_id: editing.goal_id,
+    goal_id: editing.goal_id ?? defaultGoalId,
     name: editing.name,
     durationHours: Math.floor(editing.duration_min / 60),
     durationMins: editing.duration_min % 60,

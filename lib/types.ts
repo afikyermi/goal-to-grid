@@ -1,5 +1,7 @@
 export type Priority = 1 | 2 | 3 // 1=High, 2=Medium, 3=Low
 export type ScheduleStatus = 'Pending' | 'Done' | 'Missed'
+export type TaskType = 'planned' | 'inbox'
+export type InboxStatus = 'active' | 'assigned' | 'done'
 
 export interface Household {
   id: string
@@ -39,13 +41,18 @@ export interface Goal {
 
 export interface Task {
   id: string
-  goal_id: string
+  household_id: string
+  created_by: string | null
+  goal_id: string | null
   name: string
   duration_min: number
   priority: Priority
   is_completed: boolean
   is_recurring: boolean
   recurrence_rule: string | null
+  task_type: TaskType
+  inbox_status: InboxStatus
+  captured_at: string
   created_at: string
 }
 
@@ -116,11 +123,11 @@ export interface AvailabilityWindow {
 
 // Enriched types used in UI
 export interface TaskWithGoal extends Task {
-  goals: Pick<Goal, 'id' | 'name' | 'sector_id' | 'start_date' | 'end_date'>
+  goals: Pick<Goal, 'id' | 'name' | 'sector_id' | 'start_date' | 'end_date'> | null
 }
 
 export interface ScheduleItemWithTask extends ScheduleItem {
-  tasks: Pick<Task, 'id' | 'name' | 'duration_min' | 'priority' | 'goal_id'> & {
+  tasks: Pick<Task, 'id' | 'name' | 'duration_min' | 'priority' | 'goal_id' | 'task_type' | 'inbox_status'> & {
     goals?: Pick<Goal, 'id' | 'name' | 'start_date' | 'end_date'> | null
   }
 }

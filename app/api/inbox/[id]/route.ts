@@ -3,18 +3,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { getUserWorkspaceId, goalBelongsToWorkspace, taskBelongsToWorkspace } from '@/lib/server/workspace'
 import { NextRequest } from 'next/server'
 
-const TASK_SELECT = '*, goals(id, name, sector_id, start_date, end_date)'
-const ALLOWED_FIELDS = new Set([
-  'goal_id',
-  'name',
-  'duration_min',
-  'priority',
-  'is_completed',
-  'is_recurring',
-  'recurrence_rule',
-  'task_type',
-  'inbox_status',
-])
+const INBOX_SELECT = '*, goals(id, name, sector_id, start_date, end_date), schedule_items(id, scheduled_start, scheduled_end, status)'
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
@@ -28,55 +17,38 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     return Response.json({ error: 'Task not found' }, { status: 404 })
   }
 
-  const body = await request.json()
+  const body = await request.json().catch(() => null)
+  const action = body?.action
   const admin = createAdminClient()
-  const { data: existing, error: existingError } = await admin
-    .from('tasks')
-    .select('goal_id, task_type')
-    .eq('id', id)
-    .single()
 
-  if (existingError || !existing) return Response.json({ error: 'Task not found' }, { status: 404 })
-
-  const updates: Record<string, unknown> = {}
-  for (const [key, value] of Object.entries(body)) {
-    if (ALLOWED_FIELDS.has(key)) updates[key] = value
+  let updates: Record<string, unknown>
+  if (action === 'assign_to_goal') {
+    const goalId = typeof body?.goal_id === 'string' ? body.goal_id : ''
+    if (!goalId || !(await goalBelongsToWorkspace(goalId, workspaceId))) {
+      return Response.json({ error: 'Goal not found' }, { status: 404 })
+    }
+    updates = { goal_id: goalId, task_type: 'planned', inbox_status: 'assigned' }
+  } else if (action === 'done') {
+    updates = { is_completed: true, inbox_status: 'done' }
+  } else if (action === 'activate') {
+    updates = { is_completed: false, inbox_status: 'active' }
+  } else {
+    return Response.json({ error: 'Unsupported inbox action' }, { status: 400 })
   }
-
-  if (Object.keys(updates).length === 0) {
-    return Response.json({ error: 'No valid updates provided' }, { status: 400 })
-  }
-
-  const nextTaskType = String(updates.task_type ?? existing.task_type)
-  const nextGoalId = (updates.goal_id ?? existing.goal_id) as string | null
-
-  if (!['planned', 'inbox'].includes(nextTaskType)) {
-    return Response.json({ error: 'task_type must be planned or inbox' }, { status: 400 })
-  }
-
-  if (nextTaskType === 'planned' && !nextGoalId) {
-    return Response.json({ error: 'goal_id is required for planned tasks' }, { status: 400 })
-  }
-
-  if (nextGoalId && !(await goalBelongsToWorkspace(nextGoalId, workspaceId))) {
-    return Response.json({ error: 'Goal not found' }, { status: 404 })
-  }
-
-  if (nextTaskType === 'inbox') updates.goal_id = null
-  if (nextTaskType === 'planned' && updates.inbox_status === undefined) updates.inbox_status = 'assigned'
 
   const { data, error } = await admin
     .from('tasks')
     .update(updates)
     .eq('id', id)
-    .select(TASK_SELECT)
+    .eq('household_id', workspaceId)
+    .select(INBOX_SELECT)
     .single()
 
   if (error) return Response.json({ error: error.message }, { status: 500 })
   return Response.json(data)
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -89,7 +61,7 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
   }
 
   const admin = createAdminClient()
-  const { error } = await admin.from('tasks').delete().eq('id', id)
+  const { error } = await admin.from('tasks').delete().eq('id', id).eq('household_id', workspaceId)
   if (error) return Response.json({ error: error.message }, { status: 500 })
   return new Response(null, { status: 204 })
 }

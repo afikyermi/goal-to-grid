@@ -40,9 +40,9 @@ export async function taskBelongsToWorkspace(taskId: string, workspaceId: string
   const admin = createAdminClient()
   const { data, error } = await admin
     .from('tasks')
-    .select('id, goals!inner(sectors!inner(household_id))')
+    .select('id')
     .eq('id', taskId)
-    .eq('goals.sectors.household_id', workspaceId)
+    .eq('household_id', workspaceId)
     .maybeSingle()
 
   return !error && Boolean(data)

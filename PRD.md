@@ -4,11 +4,11 @@
 
 Most personal productivity tools — to-do apps, notes apps, plain calendars — treat tasks as flat, disconnected items. There is no enforced relationship between a task and the broader goal it serves, or between a goal and the life area it belongs to. As a result, users end up with long backlogs that feel disconnected from what they actually care about, and calendars filled with items that have no visible purpose.
 
-Goal-to-Grid is a planning and execution system that imposes a deliberate hierarchy on personal planning:
+Goal-to-Grid is a planning and execution system that imposes a deliberate hierarchy on personal planning while still allowing quick capture for urgent or unplanned work:
 
 **Household → Domain/Sector → Goal → Task → Schedule Item → (optional Google Calendar)**
 
-Every task in the system is explicitly linked to a goal. Every goal belongs to a life-area sector. When a task is placed on the calendar, it carries that context with it. This makes it possible to see not just *what* is scheduled, but *why*.
+Planned tasks are explicitly linked to a goal, and every goal belongs to a life-area sector. When a planned task is placed on the calendar, it carries that context with it. The Inbox flow adds flexibility: users can quickly capture tasks that do not yet belong to a goal, schedule them if needed, and organize them later. This makes it possible to see not just *what* is scheduled, but *why*, without blocking fast task capture.
 
 ---
 
@@ -30,11 +30,12 @@ The database schema and workspace model support household context — multiple u
 2. User defines sectors (life domains), e.g. "Career", "Health", "Education".
 3. Under each sector, user creates goals with a name, start date, end date, and priority.
 4. Under each goal, user creates tasks with a name, estimated duration (in minutes), and priority. Tasks may store an optional recurrence rule (iCalendar RRULE format) for future recurring-scheduling support.
-5. User opens the Schedule page and places tasks on specific time slots — either by dragging from the backlog onto the calendar, or by asking the scheduling engine for slot suggestions.
-6. The scheduling engine checks the user's availability constraints (defined on the Constraints page) and existing scheduled items to avoid conflicts.
-7. Optionally, the user connects their Google Calendar account. Goal-to-Grid can then create and manage schedule-item events in Google Calendar, and import external Google Calendar events so that they appear as busy blocks during scheduling.
-8. The Dashboard page aggregates progress across all sectors, shows upcoming schedule items, and highlights tasks that have been missed.
-9. The Architecture page provides a full entity-relationship diagram and live entity counts, documenting the data model for review and maintenance.
+5. If a task appears suddenly and does not yet belong to a goal, the user can capture it in the Inbox and organize it later.
+6. User opens the Schedule page and places tasks on specific time slots — either by dragging from the backlog onto the calendar, creating a quick Inbox task directly from a time slot, or asking the scheduling engine for slot suggestions.
+7. The scheduling engine checks the user's availability constraints (defined on the Constraints page) and existing scheduled items to avoid conflicts.
+8. Optionally, the user connects their Google Calendar account. Goal-to-Grid can then create and manage schedule-item events in Google Calendar, and import external Google Calendar events so that they appear as busy blocks during scheduling.
+9. The Dashboard page aggregates progress across all sectors, shows upcoming schedule items, and highlights tasks that have been missed.
+10. The Architecture page provides a full entity-relationship diagram and live entity counts, documenting the data model for review and maintenance.
 
 ---
 
@@ -46,9 +47,10 @@ The database schema and workspace model support household context — multiple u
 - **Household workspace** — Each user belongs to a household. All data (sectors, goals, tasks, schedule items) is scoped to that household.
 - **Sector management** — Create, edit, and delete life-area sectors. Sectors act as the top-level organizational unit below the household.
 - **Goal management** — Create goals linked to a sector. Goals have a name, optional description, start date, end date, priority (High / Medium / Low), and a completion flag.
-- **Task management** — Create tasks linked to a goal. Tasks have a name, duration in minutes, priority, and an optional recurrence rule field for future recurring-task support. Tasks can be marked complete.
+- **Task management** — Create planned tasks linked to a goal. Tasks have a name, duration in minutes, priority, and an optional recurrence rule field for future recurring-task support. Tasks can be marked complete.
+- **Inbox / Quick Capture** — Create quick tasks that are not yet linked to a goal. Inbox tasks can be scheduled immediately, marked done, deleted, or later assigned to a goal and converted into planned tasks.
 - **Plan view** — A hierarchical page showing all sectors, their goals, and the tasks under each goal in one place.
-- **Schedule page** — A weekly calendar grid. Unscheduled tasks are shown in a backlog panel. Users can drag a task onto the calendar to schedule it, or open a scheduling dialog.
+- **Schedule page** — A weekly calendar grid. Unscheduled tasks are shown in a backlog panel. Users can drag a task onto the calendar, create a new planned task, or capture a new Inbox task directly from the scheduling dialog.
 - **Drag-and-drop scheduling** — Powered by @dnd-kit. Schedule items can be placed on any time slot. Optimistic updates with rollback on failure.
 - **Scheduling engine** — A server-side algorithm that finds available time slots for tasks, sorted by priority and goal deadline, at 15-minute granularity. Returns up to three slot suggestions per task.
 - **Auto-reschedule** — When triggered, overdue `Pending` items are marked `Missed` and the engine attempts to reschedule them within the next 7 days.
@@ -89,13 +91,15 @@ The database schema and workspace model support household context — multiple u
 | 3 | As a user, I can create, rename, and delete sectors (life domains) to organize my goals. |
 | 4 | As a user, I can create a goal under a sector, set its start and end dates and priority, and mark it complete when done. |
 | 5 | As a user, I can create tasks under a goal with an estimated duration in minutes and a priority level. I can optionally set a recurrence rule. |
-| 6 | As a user, I can view all sectors, goals, and tasks in a single hierarchical Plan view. |
-| 7 | As a user, I can drag an unscheduled task from the backlog panel onto the weekly calendar to schedule it at a specific time. |
-| 8 | As a user, I can ask the scheduling engine for suggestions. It will propose up to three available time slots for a task, taking my constraints and existing schedule into account. |
-| 9 | As a user, I can define availability constraints (e.g. "no work on Monday and Wednesday evenings from 7–10 PM") and the scheduling engine will avoid those windows. |
-| 10 | As a user, I can trigger auto-reschedule to have overdue missed tasks automatically placed in the next available slot within the coming week. |
-| 11 | As a user, I can connect my Google Calendar via OAuth. After connecting, I can push my Goal-to-Grid schedule items to Google Calendar, and import my external Google events to display as busy blocks. |
-| 12 | As an authenticated user, I can view the Architecture page to understand the database entity-relationship diagram and live entity counts. As an admin, I can also manage user roles from the admin panel. |
+| 6 | As a user, I can quickly capture an unplanned task in the Inbox without choosing a goal first, then assign it to a goal later if needed. |
+| 7 | As a user, I can view all sectors, goals, and planned tasks in a single hierarchical Plan view. |
+| 8 | As a user, I can drag an unscheduled task from the backlog panel onto the weekly calendar to schedule it at a specific time. |
+| 9 | As a user, I can create a new planned task or Inbox task directly from an empty calendar slot. |
+| 10 | As a user, I can ask the scheduling engine for suggestions. It will propose up to three available time slots for a task, taking my constraints and existing schedule into account. |
+| 11 | As a user, I can define availability constraints (e.g. "no work on Monday and Wednesday evenings from 7–10 PM") and the scheduling engine will avoid those windows. |
+| 12 | As a user, I can trigger auto-reschedule to have overdue missed tasks automatically placed in the next available slot within the coming week. |
+| 13 | As a user, I can connect my Google Calendar via OAuth. After connecting, I can push my Goal-to-Grid schedule items to Google Calendar, and import my external Google events to display as busy blocks. |
+| 14 | As an authenticated user, I can view the Architecture page to understand the database entity-relationship diagram and live entity counts. As an admin, I can also manage user roles from the admin panel. |
 
 ---
 
@@ -130,7 +134,7 @@ The database schema and workspace model support household context — multiple u
 | `sectors` | Life-area domains | `id`, `household_id`, `name` |
 | `priority_levels` | Lookup: 1=High, 2=Medium, 3=Low | `id`, `label` |
 | `goals` | Goals under a sector | `id`, `sector_id`, `name`, `start_date`, `end_date`, `priority`, `is_completed` |
-| `tasks` | Tasks under a goal | `id`, `goal_id`, `name`, `duration_min`, `priority`, `is_recurring`, `recurrence_rule`, `is_completed` |
+| `tasks` | Planned or inbox tasks | `id`, `household_id`, `created_by`, `goal_id` (nullable for inbox tasks), `name`, `duration_min`, `priority`, `is_recurring`, `recurrence_rule`, `is_completed`, `task_type`, `inbox_status`, `captured_at` |
 | `user_constraints` | Availability blocks | `id`, `user_id`, `label`, `recurrence_days` (int[]), `start_time`, `end_time` |
 | `schedule_items` | Tasks placed on the calendar | `id`, `task_id`, `scheduled_by`, `scheduled_start`, `scheduled_end`, `status`, `google_event_id` |
 | `calendar_connections` | Google OAuth tokens (encrypted) | `id`, `user_id`, `provider`, `access_token_encrypted`, `refresh_token_encrypted`, `expires_at` |
@@ -151,9 +155,11 @@ households
   └── profiles (users)
   └── sectors
         └── goals
-              └── tasks
+              └── planned tasks
                     └── schedule_items
                           └── (google_event_id → Google Calendar)
+  └── inbox tasks
+        └── schedule_items
 ```
 
 ### Row-Level Security
@@ -175,6 +181,7 @@ All tables have RLS enabled. Users access only data within their household. The 
 The application exposes REST-style internal API routes under `/api/`:
 
 - **CRUD:** `/api/sectors`, `/api/goals`, `/api/tasks`, `/api/schedule`, `/api/constraints` (each with `[id]` sub-routes for GET/PATCH/DELETE)
+- **Inbox:** `/api/inbox`, `/api/inbox/[id]`
 - **Scheduling:** `/api/schedule/suggestions`, `/api/schedule/reschedule`
 - **Google Calendar:** `/api/calendar/connect`, `/api/calendar/callback`, `/api/calendar/status`, `/api/calendar/disconnect`, `/api/calendar/import`, `/api/calendar/sync`, `/api/calendar/external-events`
 - **Dashboard:** `/api/dashboard`
@@ -189,6 +196,7 @@ The application exposes REST-style internal API routes under `/api/`:
 The project is considered complete when:
 
 - [x] All CRUD flows (sectors, goals, tasks, constraints, schedule items) work end-to-end.
+- [x] Inbox quick-capture tasks can be created, scheduled, completed, deleted, and assigned to goals later.
 - [x] The scheduling engine proposes constraint-aware slots and auto-reschedule runs correctly.
 - [x] Google Calendar connection works for a real Google account, including event push for Goal-to-Grid-managed schedule items and import of external events as busy blocks.
 - [x] The Architecture page renders the ERD diagrams and live entity counts.
@@ -196,4 +204,4 @@ The project is considered complete when:
 - [x] All migrations have been applied and RLS policies are enforced.
 - [x] The application builds without TypeScript or lint errors (`npm run build`).
 - [x] The project is committed to Git with meaningful history.
-- [ ] Course documentation files (PRD.md, tasks.md, README.md) are complete and accurate.
+- [x] Course documentation files (PRD.md, tasks.md, README.md) are complete and accurate.

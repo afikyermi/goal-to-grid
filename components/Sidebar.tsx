@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils'
 import {
   Calendar,
   Columns3,
+  Inbox,
   LayoutDashboard,
   LogOut,
   Network,
@@ -17,6 +18,7 @@ import {
 const navItems = [
   { href: '/dashboard', label: 'Workspace', icon: LayoutDashboard },
   { href: '/plan', label: 'Plan', icon: Columns3 },
+  { href: '/inbox', label: 'Inbox', icon: Inbox },
   { href: '/schedule', label: 'Schedule', icon: Calendar },
   { href: '/constraints', label: 'Constraints', icon: ShieldAlert },
   { href: '/admin/architecture', label: 'Architecture', icon: Network },

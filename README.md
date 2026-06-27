@@ -10,7 +10,7 @@ Most to-do apps and calendars treat tasks as flat, disconnected items. Goal-to-G
 
 **Household → Sector (life domain) → Goal → Task → Schedule Item → (optional Google Calendar)**
 
-Every scheduled item traces back to a goal and a life area. This makes it possible to see not just *what* is on the calendar, but *why*.
+Planned scheduled items trace back to a goal and a life area. For urgent or unplanned work, the Inbox flow allows quick task capture first and organization later. This makes it possible to see not just *what* is on the calendar, but *why*, without making quick capture feel heavy.
 
 ---
 
@@ -20,8 +20,9 @@ Every scheduled item traces back to a goal and a life area. This makes it possib
 - **Household workspace** — All data is scoped to a household. The schema supports multiple members; the current UI is focused on individual planning within that context.
 - **Sector and goal management** — Define life-area sectors (e.g. Career, Health) and create goals with start/end dates and priority levels.
 - **Task management** — Break goals into tasks with an estimated duration in minutes, priority, and an optional recurrence rule.
+- **Inbox / Quick Capture** — Capture unplanned tasks without selecting a goal first. Inbox tasks can be scheduled, marked done, deleted, or assigned to a goal later.
 - **Plan view** — A single hierarchical page showing all sectors → goals → tasks.
-- **Schedule page** — A weekly calendar grid. Drag tasks from the backlog onto the calendar to schedule them.
+- **Schedule page** — A weekly calendar grid. Drag tasks from the backlog onto the calendar, or create a planned task / Inbox task directly from a calendar time slot.
 - **Scheduling engine** — Suggests available time slots for tasks at 15-minute granularity, respecting user constraints and existing schedule items. Missed items can be auto-rescheduled.
 - **User constraints** — Define availability blocks (e.g. evenings, specific days) that the scheduling engine avoids.
 - **Google Calendar integration** — Connect a Google account to create and manage Goal-to-Grid events in Google Calendar, and import external events as busy blocks for scheduling context.
@@ -104,6 +105,7 @@ Every scheduled item traces back to a goal and a life area. This makes it possib
    - `005_external_events_metadata.sql`
    - `006_constraint_recurrence.sql`
    - `007_calendar_sync_permissions.sql`
+   - `008_inbox_quick_capture.sql`
 
 5. **Run the development server**
 
@@ -129,7 +131,7 @@ Every scheduled item traces back to a goal and a life area. This makes it possib
 | **Supabase Auth** | User registration, login, session management, password recovery |
 | **Google Calendar API v3** | OAuth 2.0 integration for creating/managing events and importing external calendar events |
 
-The application exposes internal REST API routes under `/api/` covering CRUD operations for all entities, the scheduling engine, Google Calendar integration, dashboard aggregation, and admin functions.
+The application exposes internal REST API routes under `/api/` covering CRUD operations for all entities, Inbox quick capture, the scheduling engine, Google Calendar integration, dashboard aggregation, and admin functions.
 
 ---
 

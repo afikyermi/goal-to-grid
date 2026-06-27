@@ -18,7 +18,10 @@ const priorityBorderL: Record<number, string> = {
 }
 
 function formatShortDate(dateString: string): string {
-  return new Date(dateString).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+  const [year, month, day] = dateString.split('-').map(Number)
+  if (!year || !month || !day) return dateString
+  const monthName = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][month - 1]
+  return `${monthName} ${day}`
 }
 
 function goalDateWindow(goal: BoardGoal): string {

@@ -129,11 +129,34 @@ This document tracks the development stages and individual tasks for the Goal-to
 
 ---
 
-## Stage 12 — Debugging and Final Submission
+## Stage 12 — Debugging and Initial Documentation
 
 - [x] Debug and fix Google Calendar sync cleanup (handling stale `google_event_id` references and permission edge cases)
 - [x] Fix TypeScript type assertion in calendar integration to prevent spread signature collapse
 - [x] Resolve RLS edge cases that blocked cross-user household scheduling reads
+- [x] Write initial `PRD.md`
+- [x] Write initial `tasks.md`
+- [x] Write initial `README.md`
+
+---
+
+## Stage 13 — Inbox / Quick Capture Product Extension
+
+- [x] Write migration 008: extend `tasks` with `household_id`, `created_by`, `task_type`, `inbox_status`, and `captured_at`; make `goal_id` nullable for inbox tasks
+- [x] Update task RLS and workspace ownership checks so tasks are scoped directly by household
+- [x] Update task API routes to support planned tasks, inbox tasks, and task conversion from inbox to planned
+- [x] Create Inbox API routes: `GET/POST /api/inbox` and `PATCH/DELETE /api/inbox/[id]`
+- [x] Build `/inbox` page for quick add, place in calendar, assign to goal, mark done, and delete actions
+- [x] Add Inbox navigation item to the sidebar
+- [x] Update `/schedule` manual scheduling dialog to support existing tasks, new planned tasks, and new Inbox tasks from an empty calendar slot
+- [x] Update scheduling suggestions so only planned tasks with goals are eligible for algorithmic recommendations
+- [x] Update schedule display styling so Inbox tasks are visually distinct from planned tasks and Google Calendar events
+- [x] Fix affected Plan/Tasks UI assumptions where task `goal_id` can now be nullable
+
+---
+
+## Stage 14 — Final Course Submission Documentation
+
 - [x] Write `PRD.md`
 - [x] Write `tasks.md`
 - [x] Write `README.md`

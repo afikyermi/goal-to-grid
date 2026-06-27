@@ -51,9 +51,10 @@ export async function POST(request: NextRequest) {
 
   const { data: tasks, error: tasksError } = await admin
     .from('tasks')
-    .select('*, goals!inner(id, name, start_date, end_date, deadline, priority, sectors!inner(household_id))')
+    .select('*, goals!inner(id, name, start_date, end_date, deadline, priority)')
     .in('id', task_ids)
-    .eq('goals.sectors.household_id', workspaceId)
+    .eq('household_id', workspaceId)
+    .eq('task_type', 'planned')
     .eq('is_completed', false)
 
   if (tasksError || !tasks) return Response.json({ error: 'Failed to fetch tasks' }, { status: 500 })

@@ -4,7 +4,7 @@ import { NextRequest } from 'next/server'
 import { scheduleTasks } from '@/lib/engine/scheduler'
 import type { Task, UserConstraint } from '@/lib/types'
 import { recordBehaviorEvent } from '@/lib/behavior/events'
-import { getUserWorkspaceId, taskBelongsToWorkspace } from '@/lib/server/workspace'
+import { getUserWorkspaceId, goalBelongsToWorkspace, taskBelongsToWorkspace } from '@/lib/server/workspace'
 
 type ManualScheduleBody = {
   task_id: string
@@ -18,6 +18,20 @@ type BulkScheduleBody = {
   window_end: string
 }
 
+type NewTaskScheduleBody = {
+  new_task: {
+    name: string
+    duration_min: number
+    priority?: number
+    task_type: 'planned' | 'inbox'
+    goal_id?: string | null
+  }
+  scheduled_start: string
+  scheduled_end: string
+}
+
+const SCHEDULE_SELECT = '*, tasks(id, name, duration_min, priority, goal_id, task_type, inbox_status, goals(id, name, start_date, end_date))'
+
 function isUuid(value: unknown): value is string {
   return typeof value === 'string'
     && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
@@ -27,7 +41,7 @@ function isDateTime(value: unknown): value is string {
   return typeof value === 'string' && !Number.isNaN(new Date(value).getTime())
 }
 
-function parseScheduleBody(body: unknown): ManualScheduleBody | BulkScheduleBody | null {
+function parseScheduleBody(body: unknown): ManualScheduleBody | BulkScheduleBody | NewTaskScheduleBody | null {
   if (!body || typeof body !== 'object') return null
   const data = body as Record<string, unknown>
 
@@ -49,6 +63,31 @@ function parseScheduleBody(body: unknown): ManualScheduleBody | BulkScheduleBody
       task_ids: data.task_ids,
       window_start: data.window_start,
       window_end: data.window_end,
+    }
+  }
+
+  if (data.new_task && typeof data.new_task === 'object' && isDateTime(data.scheduled_start) && isDateTime(data.scheduled_end)) {
+    const newTask = data.new_task as Record<string, unknown>
+    const taskType = newTask.task_type === 'inbox' ? 'inbox' : 'planned'
+    const goalId = typeof newTask.goal_id === 'string' ? newTask.goal_id : null
+    if (
+      typeof newTask.name === 'string'
+      && newTask.name.trim().length > 0
+      && typeof newTask.duration_min === 'number'
+      && newTask.duration_min >= 5
+      && (taskType === 'inbox' || isUuid(goalId))
+    ) {
+      return {
+        new_task: {
+          name: newTask.name,
+          duration_min: newTask.duration_min,
+          priority: typeof newTask.priority === 'number' ? newTask.priority : undefined,
+          task_type: taskType,
+          goal_id: goalId,
+        },
+        scheduled_start: data.scheduled_start,
+        scheduled_end: data.scheduled_end,
+      }
     }
   }
 
@@ -78,7 +117,7 @@ export async function GET(request: NextRequest) {
 
   let query = admin
     .from('schedule_items')
-    .select('*, tasks(id, name, duration_min, priority, goal_id, goals(id, name, start_date, end_date))')
+    .select(SCHEDULE_SELECT)
     .eq('scheduled_by', user.id)
     .order('scheduled_start')
 
@@ -115,6 +154,84 @@ export async function POST(request: NextRequest) {
   const body = parseScheduleBody(rawBody)
   if (!body) return Response.json({ error: 'Invalid request body' }, { status: 400 })
 
+  // Create a task from the calendar, then immediately schedule it.
+  if ('new_task' in body) {
+    const { new_task, scheduled_start, scheduled_end } = body
+    if (new Date(scheduled_end) <= new Date(scheduled_start)) {
+      return Response.json({ error: 'scheduled_end must be after scheduled_start' }, { status: 400 })
+    }
+
+    if (new_task.task_type === 'planned') {
+      if (!new_task.goal_id || !(await goalBelongsToWorkspace(new_task.goal_id, workspaceId))) {
+        return Response.json({ error: 'Goal not found' }, { status: 404 })
+      }
+    }
+
+    const { data: createdTask, error: taskError } = await admin
+      .from('tasks')
+      .insert({
+        household_id: workspaceId,
+        created_by: user.id,
+        goal_id: new_task.task_type === 'planned' ? new_task.goal_id : null,
+        name: new_task.name.trim(),
+        duration_min: Number(new_task.duration_min),
+        priority: new_task.priority ?? 2,
+        is_recurring: false,
+        recurrence_rule: null,
+        task_type: new_task.task_type,
+        inbox_status: new_task.task_type === 'inbox' ? 'active' : 'assigned',
+      })
+      .select('*, goals(id, name, sector_id, start_date, end_date)')
+      .single()
+
+    if (taskError || !createdTask) {
+      return Response.json({ error: taskError?.message ?? 'Failed to create task' }, { status: 500 })
+    }
+
+    const { data, error } = await admin
+      .from('schedule_items')
+      .insert({
+        task_id: createdTask.id,
+        scheduled_start,
+        scheduled_end,
+        scheduled_by: user.id,
+        status: 'Pending',
+      })
+      .select(SCHEDULE_SELECT)
+      .single()
+
+    if (error) {
+      await admin.from('tasks').delete().eq('id', createdTask.id)
+      return Response.json({ error: 'Failed to create schedule item' }, { status: 500 })
+    }
+
+    const task = data.tasks as Pick<Task, 'id' | 'name' | 'goal_id' | 'task_type'> & {
+      goals?: { id: string; name: string; start_date: string; end_date: string } | null
+    }
+    const outsideGoalWindow = isOutsideGoalWindow(scheduled_start, scheduled_end, task.goals)
+
+    await recordBehaviorEvent({
+      userId: user.id,
+      eventType: 'task_scheduled',
+      taskId: task.id,
+      goalId: task.goal_id,
+      scheduleItemId: data.id,
+      scheduledStart: scheduled_start,
+      scheduledEnd: scheduled_end,
+      metadata: {
+        source: task.task_type === 'inbox' ? 'calendar_quick_capture' : 'calendar_new_planned_task',
+        outside_goal_window: outsideGoalWindow,
+      },
+    })
+
+    return Response.json({
+      message: task.task_type === 'inbox' ? 'Captured inbox task on calendar' : 'Created and scheduled task',
+      task: createdTask,
+      item: data,
+      warning: outsideGoalWindow ? 'This task is outside its goal date range.' : null,
+    }, { status: 201 })
+  }
+
   // Manual single-task scheduling
   if ('task_id' in body) {
     const { task_id, scheduled_start, scheduled_end } = body
@@ -134,7 +251,7 @@ export async function POST(request: NextRequest) {
         scheduled_by: user.id,
         status: 'Pending',
       })
-      .select('*, tasks(id, name, duration_min, priority, goal_id, goals(id, name, start_date, end_date))')
+      .select(SCHEDULE_SELECT)
       .single()
 
     if (error) return Response.json({ error: 'Failed to create schedule item' }, { status: 500 })
@@ -170,9 +287,10 @@ export async function POST(request: NextRequest) {
   // Fetch tasks — exclude completed ones
   const { data: tasks, error: tasksError } = await admin
     .from('tasks')
-    .select('*, goals!inner(id, name, start_date, end_date, deadline, priority, sectors!inner(household_id))')
+    .select('*, goals!inner(id, name, start_date, end_date, deadline, priority)')
     .in('id', task_ids)
-    .eq('goals.sectors.household_id', workspaceId)
+    .eq('household_id', workspaceId)
+    .eq('task_type', 'planned')
     .eq('is_completed', false)
 
   if (tasksError || !tasks) return Response.json({ error: 'Failed to fetch tasks' }, { status: 500 })
@@ -233,7 +351,7 @@ export async function POST(request: NextRequest) {
   const { data: inserted, error: insertError } = await admin
     .from('schedule_items')
     .insert(itemsWithUser)
-    .select('*, tasks(id, name, duration_min, priority, goal_id, goals(id, name, start_date, end_date))')
+    .select(SCHEDULE_SELECT)
 
   if (insertError) return Response.json({ error: 'Failed to insert schedule items' }, { status: 500 })
   return Response.json({ message: `Scheduled ${inserted.length} tasks`, items: inserted }, { status: 201 })
